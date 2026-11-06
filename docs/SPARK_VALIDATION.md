@@ -89,3 +89,19 @@ sufficient free memory, its export checks and desktop GUI/playback verification.
 Optional models remain outside this validation scope. ExMR Moving Camera needs
 an unavailable ARM pycolmap build. Character/Blender exports need a compatible
 ARM64 Blender 4.5 installation; source FBX export is independent of Blender.
+
+## Performance preparation — 2026-11-06
+
+The CLI source-export additions and gated performance tools were synchronized to
+this host. The expanded CPU suite passed 149 tests with two conditional skips;
+the corresponding amd64 run passed 152 with two skips, including three additional
+two-process/placement correctness tests. No GPU inference is implied by those
+CPU test counts.
+
+The actual public `benchmark_flow.py migration` preflight deferred at 7.7 GiB
+available RAM, before creating an inference project. Its 32 GiB admission budget
+is conservative for this particular validation run, not a measured model minimum.
+The unrelated 85,041 MiB compute workload remained running. Complete GB10
+inference, formal single-GPU baselines and GPU TP2/PP2 trials are still pending.
+See [the experiment protocol](BENCHMARK_PROTOCOL.md) for tools, CPU full-checkpoint
+agreement and the required order of the subsequent tests.
