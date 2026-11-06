@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from tools.benchmark_flow import idle_devices, require_baselines, require_gate
+from tools.benchmark_flow import idle_devices, require_baselines, require_gate, seed_canonical_project
 from unittest.mock import patch
 
 
@@ -53,6 +53,23 @@ class Prerequisites(unittest.TestCase):
         with patch('tools.benchmark_flow.subprocess.check_output', side_effect=[devices, apps]), patch.dict('os.environ', {'CUDA_VISIBLE_DEVICES': '1'}, clear=True):
             with self.assertRaises(RuntimeError):
                 idle_devices()
+
+    def test_canonical_round_copies_pixels_and_clears_all_inference_state(self):
+        template = self.root / 'canonical'
+        template.mkdir()
+        state = dict(pipeline={'model': 'flowhmr'}, frames=60, fps=30, start=0., end=2.,
+                     source={'path': '/trusted/public.mp4'}, stages={'track': {'status': 'complete'}})
+        (template / 'project.json').write_text(json.dumps(state))
+        (template / 'input.mp4').write_bytes(b'canonical pixel fixture')
+        (template / 'tracking.npz').write_bytes(b'must not copy')
+        (template / 'flow_prediction.pt').write_bytes(b'must not copy')
+        result = seed_canonical_project(template, self.root / 'new', 60)
+        self.assertEqual({p.name for p in result.iterdir()}, {'project.json', 'input.mp4'})
+        self.assertEqual(json.loads((result / 'project.json').read_text())['stages'], {})
+        self.assertEqual((result / 'input.mp4').read_bytes(), (template / 'input.mp4').read_bytes())
+        self.assertEqual(json.loads((template / 'project.json').read_text()), state)
+        with self.assertRaises(ValueError):
+            seed_canonical_project(template, self.root / 'new', 60)
 
 
 @unittest.skipUnless(importlib.util.find_spec('torch') and importlib.util.find_spec('einops'), 'requires pinned Torch/einops')

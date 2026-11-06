@@ -124,12 +124,18 @@ hardware comparison. Run on each machine:
   --output experiments/bench-single
 .venv/bin/python tools/benchmark_flow.py pipeline \
   --migration-report experiments/bench-gb10-migration/migration.json \
+  --template-project experiments/bench-conditioning \
   --frames 60 --output experiments/bench-pipeline
 ```
 
-The pipeline scope includes video preparation and preview publication, unlike
-the generator scope. Each pipeline round uses a new project and refuses cached
-inference. CPU verification/hashing is outside its timer. The working-video
+The canonical pipeline scope copies the prepared video and metadata into a fresh
+project, clearing all stage state and copying no tracking or inference outputs.
+Copy the canonical project's `project.json` and optional `preview.mp4`/`preview.json`
+beside the conditioning files for this mode. Original source-video conversion is
+excluded; preview publication is included. Without `--template-project`, video
+conversion is also included and may produce different encoded pixels with different
+FFmpeg builds. Each round refuses cached inference. CPU verification/hashing is
+outside its timer. The working-video
 bytes and decoded pixels must remain identical between repetitions. Compare
 decoded pixels, settings and runtime versions across platforms before interpreting
 the complete-pipeline comparison. Longer cases use `--frames 451` or `690`;

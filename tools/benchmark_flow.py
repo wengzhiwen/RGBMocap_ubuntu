@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import platform
 import signal
+import shutil
 import statistics
 import subprocess
 import sys
@@ -195,6 +196,30 @@ def generator(args):
     execute(worker_command('flow', 'generator', output / 'request.json'), output / 'worker.log', environment())
 
 
+def seed_canonical_project(template, target, frames):
+    """Copy prepared pixels/metadata only, never tracking or inference caches."""
+    from mocap.project_workspace import create
+    template, target = Path(template), Path(target)
+    state = read(template / 'project.json')
+    if state.get('pipeline', {}).get('model') != 'flowhmr' or state.get('frames') != frames or state.get('fps') != 30:
+        raise ValueError('Canonical template must be a matching 30 fps FlowHMR project.')
+    if state.get('people_root') or state.get('person_frames') or state.get('start') != 0:
+        raise ValueError('Use a standalone canonical video starting at zero.')
+    if abs(state['end'] - frames / 30) > 1e-5:
+        raise ValueError('Canonical clip range does not match the requested frame count.')
+    if target.exists():
+        raise ValueError('Canonical round target must be a new workspace.')
+    create(target, Path(state['source']['path']), state['source'], 'flowhmr')
+    project = target / 'flowhmr'
+    project.mkdir()
+    for name in ('input.mp4', 'preview.mp4', 'preview.json'):
+        if (template / name).is_file(): shutil.copy2(template / name, project / name)
+    state['stages'] = {}
+    state['workspace_root'] = '..'
+    write(project / 'project.json', state)
+    return project
+
+
 def pipeline(args):
     """Fresh-process end-to-end rounds; every repetition owns a new project."""
     from mocap.linux_runtime import interpreter
@@ -202,11 +227,15 @@ def pipeline(args):
     devices = idle_devices()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
-    report = dict(schema=1, scope='fresh-pipeline-including-prepare-and-preview', mode='single',
+    scope = 'fresh-pipeline-from-canonical-video' if args.template_project else 'fresh-pipeline-including-prepare-and-preview'
+    report = dict(schema=1, scope=scope, mode='single',
         passed=False, hardware=devices, frames=args.frames, warmups=args.warmups, rounds=[],
         source_video=str(args.video.resolve()), camera_interval=args.camera_interval,
+        canonical_template=str(args.template_project.resolve()) if args.template_project else None,
         hamer=True, correction=True, resource_safety=True, os_cache='unmanaged; no cache clearing',
         excludes='External source FBX/Blender export; CPU validation and hashing excluded from timer.')
+    if args.template_project:
+        report['excludes'] += ' Original source-video conversion excluded; canonical-video copy and CLI preparation included.'
     write(output / 'result.json', report)
     expected = None
     env = environment()
@@ -220,6 +249,8 @@ def pipeline(args):
                 '--end', str(args.frames / 30), '--camera-interval', str(args.camera_interval),
                 '--hamer', '--correct', '--resource-safety', 'on', '--json']
             started = time.perf_counter()
+            if args.template_project:
+                seed_canonical_project(args.template_project, folder / 'project', args.frames)
             events = execute(command, folder / 'pipeline.log', env)
             seconds = time.perf_counter() - started
             completed = [e for e in events if isinstance(e, dict) and e.get('type') == 'complete']
@@ -276,6 +307,7 @@ def parser():
     whole = commands.add_parser('pipeline', help='Fresh FlowHMR + HaMeR + correction, including preparation and previews.')
     whole.add_argument('--migration-report', type=Path, required=True)
     whole.add_argument('--video', type=Path, default=ROOT / 'docs/samples/motion-capture.mp4')
+    whole.add_argument('--template-project', type=Path, help='Copy only canonical working video/metadata into each fresh round; exclude original video conversion.')
     whole.add_argument('--output', type=Path, required=True)
     whole.add_argument('--frames', type=int, choices=(60, 451, 690), default=60)
     whole.add_argument('--camera-interval', type=int, choices=(-1, 0, 1, 2, 5, 10, 30), default=-1)
