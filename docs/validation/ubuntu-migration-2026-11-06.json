@@ -1,0 +1,468 @@
+{
+  "schema": 1,
+  "report_date": "2026-11-06",
+  "scope": "Ubuntu migration and performance acceptance; public bundled sample only",
+  "source_revision": "47df3f8",
+  "units": {
+    "time": "seconds",
+    "memory": "bytes",
+    "position": "metres",
+    "rotation": "degrees"
+  },
+  "methodology": {
+    "excluded_warmups": 1,
+    "measured_rounds": 5,
+    "seed": 0,
+    "ode_steps": 20,
+    "precision": "FP32 generator; original component precision",
+    "attention": "256-query MATH; full temporal context",
+    "resource_safety": true
+  },
+  "systems": {
+    "pro": {
+      "architecture": "x86_64",
+      "gpu": "NVIDIA RTX PRO 4000 Blackwell",
+      "flow_torch": "2.7.1+cu128",
+      "hamer_torch": "2.8.0+cu128"
+    },
+    "spark": {
+      "architecture": "aarch64",
+      "gpu": "NVIDIA GB10",
+      "flow_torch": "2.9.1+cu130",
+      "hamer_torch": "2.9.1+cu130"
+    }
+  },
+  "records": {
+    "pro-single60-v2": {
+      "scope": "warm-generator",
+      "median": 0.255512383999303,
+      "minimum": 0.25405299999692943,
+      "maximum": 0.2560128129989607,
+      "rounds": [
+        0.25405299999692943,
+        0.25541854100083583,
+        0.2560128129989607,
+        0.255512383999303,
+        0.2556566700004623
+      ],
+      "peaks": {
+        "0": {
+          "allocated": 1960426496,
+          "reserved": 1981808640
+        }
+      },
+      "metrics": {
+        "trans_max_abs": 0,
+        "shapes_max_abs": 0,
+        "rot6d_max_abs": 0,
+        "foot_contacts_max_abs": 0,
+        "local_joints_positions_max_abs": 0,
+        "smooth_root_pos_max_abs": 0,
+        "pelvis_world_max_abs": 0,
+        "translation_max_m": 0,
+        "local_rotation_max_degrees": 0,
+        "world_fk_joint_max_m": 0
+      },
+      "load_peaks": [
+        {
+          "device": 0,
+          "allocated": 1936022016,
+          "reserved": 1948254208
+        }
+      ]
+    },
+    "gb10-single60-v2": {
+      "scope": "warm-generator",
+      "median": 0.5032107450533658,
+      "minimum": 0.5009680839721113,
+      "maximum": 0.5074389949440956,
+      "rounds": [
+        0.5074389949440956,
+        0.5020086048170924,
+        0.5032107450533658,
+        0.5009680839721113,
+        0.5065093871671706
+      ],
+      "peaks": {
+        "0": {
+          "allocated": 1961475072,
+          "reserved": 1981808640
+        }
+      },
+      "metrics": {
+        "trans_max_abs": 0,
+        "shapes_max_abs": 0,
+        "rot6d_max_abs": 0,
+        "foot_contacts_max_abs": 0,
+        "local_joints_positions_max_abs": 0,
+        "smooth_root_pos_max_abs": 0,
+        "pelvis_world_max_abs": 0,
+        "translation_max_m": 0,
+        "local_rotation_max_degrees": 0,
+        "world_fk_joint_max_m": 0
+      },
+      "load_peaks": [
+        {
+          "device": 0,
+          "allocated": 1936022016,
+          "reserved": 1948254208
+        }
+      ]
+    },
+    "pro-tp2-socket60-v2": {
+      "scope": "warm-generator",
+      "median": 0.28192639900225913,
+      "minimum": 0.276546868000878,
+      "maximum": 0.2865024999991874,
+      "rounds": [
+        0.2865024999991874,
+        0.28223263000109,
+        0.276546868000878,
+        0.2767084250008338,
+        0.28192639900225913
+      ],
+      "peaks": {
+        "0": {
+          "allocated": 1351216640,
+          "reserved": 1503657984
+        },
+        "1": {
+          "allocated": 1351216640,
+          "reserved": 1501560832
+        }
+      },
+      "metrics": {
+        "trans_max_abs": 7.152557373046875e-07,
+        "shapes_max_abs": 1.0132789611816406e-06,
+        "rot6d_max_abs": 1.3709068298339844e-06,
+        "foot_contacts_max_abs": 4.172325134277344e-07,
+        "local_joints_positions_max_abs": 3.5762786865234375e-07,
+        "smooth_root_pos_max_abs": 7.152557373046875e-07,
+        "pelvis_world_max_abs": 7.152557373046875e-07,
+        "translation_max_m": 7.27567396552331e-07,
+        "local_rotation_max_degrees": 8.439845068624787e-05,
+        "world_fk_joint_max_m": 9.830249609876773e-07
+      },
+      "load_peaks": [
+        {
+          "device": 0,
+          "allocated": 1947881472,
+          "reserved": 1969225728
+        },
+        {
+          "device": 1,
+          "allocated": 1947881472,
+          "reserved": 1969225728
+        }
+      ]
+    },
+    "pro-pp2-host60-v2": {
+      "scope": "warm-generator",
+      "median": 0.2682904400026018,
+      "minimum": 0.26474709900139715,
+      "maximum": 0.26889673299956485,
+      "rounds": [
+        0.26839437399758026,
+        0.2682904400026018,
+        0.26474709900139715,
+        0.268006090002018,
+        0.26889673299956485
+      ],
+      "peaks": {
+        "0": {
+          "allocated": 1014326272,
+          "reserved": 1038090240
+        },
+        "1": {
+          "allocated": 962767872,
+          "reserved": 977272832
+        }
+      },
+      "metrics": {
+        "trans_max_abs": 0,
+        "shapes_max_abs": 0,
+        "rot6d_max_abs": 0,
+        "foot_contacts_max_abs": 0,
+        "local_joints_positions_max_abs": 0,
+        "smooth_root_pos_max_abs": 0,
+        "pelvis_world_max_abs": 0,
+        "translation_max_m": 0,
+        "local_rotation_max_degrees": 0,
+        "world_fk_joint_max_m": 0
+      },
+      "load_peaks": [
+        {
+          "device": 0,
+          "allocated": 1935282176,
+          "reserved": 1948254208
+        },
+        {
+          "device": 1,
+          "allocated": 942407680,
+          "reserved": 945815552
+        }
+      ]
+    },
+    "pro-single690-v2": {
+      "scope": "warm-generator",
+      "median": 2.0714404840000498,
+      "minimum": 2.046613159000117,
+      "maximum": 2.0914751009986503,
+      "rounds": [
+        2.046613159000117,
+        2.0626117249994422,
+        2.0714404840000498,
+        2.0825334869987273,
+        2.0914751009986503
+      ],
+      "peaks": {
+        "0": {
+          "allocated": 2136843776,
+          "reserved": 2227175424
+        }
+      },
+      "metrics": {
+        "trans_max_abs": 0,
+        "shapes_max_abs": 0,
+        "rot6d_max_abs": 0,
+        "foot_contacts_max_abs": 0,
+        "local_joints_positions_max_abs": 0,
+        "smooth_root_pos_max_abs": 0,
+        "pelvis_world_max_abs": 0,
+        "translation_max_m": 0,
+        "local_rotation_max_degrees": 0,
+        "world_fk_joint_max_m": 0
+      },
+      "load_peaks": [
+        {
+          "device": 0,
+          "allocated": 1943785984,
+          "reserved": 1948254208
+        }
+      ]
+    },
+    "gb10-single690-v2": {
+      "scope": "warm-generator",
+      "median": 2.370469657005742,
+      "minimum": 2.353477268014103,
+      "maximum": 2.3819433751050383,
+      "rounds": [
+        2.353477268014103,
+        2.3819433751050383,
+        2.371118483832106,
+        2.370469657005742,
+        2.3638109699822962
+      ],
+      "peaks": {
+        "0": {
+          "allocated": 2137946624,
+          "reserved": 2227175424
+        }
+      },
+      "metrics": {
+        "trans_max_abs": 0,
+        "shapes_max_abs": 0,
+        "rot6d_max_abs": 0,
+        "foot_contacts_max_abs": 0,
+        "local_joints_positions_max_abs": 0,
+        "smooth_root_pos_max_abs": 0,
+        "pelvis_world_max_abs": 0,
+        "translation_max_m": 0,
+        "local_rotation_max_degrees": 0,
+        "world_fk_joint_max_m": 0
+      },
+      "load_peaks": [
+        {
+          "device": 0,
+          "allocated": 1943785984,
+          "reserved": 1948254208
+        }
+      ]
+    },
+    "pro-tp2-socket690-v2": {
+      "scope": "warm-generator",
+      "median": 1.4960808379983064,
+      "minimum": 1.4938726449981914,
+      "maximum": 1.4989915260011912,
+      "rounds": [
+        1.4956950129999314,
+        1.4974512289991253,
+        1.4938726449981914,
+        1.4989915260011912,
+        1.4960808379983064
+      ],
+      "peaks": {
+        "0": {
+          "allocated": 1482912256,
+          "reserved": 1639972864
+        },
+        "1": {
+          "allocated": 1482912256,
+          "reserved": 1639972864
+        }
+      },
+      "metrics": {
+        "trans_max_abs": 7.152557373046875e-07,
+        "shapes_max_abs": 5.066394805908203e-07,
+        "rot6d_max_abs": 1.341104507446289e-06,
+        "foot_contacts_max_abs": 1.1324882507324219e-06,
+        "local_joints_positions_max_abs": 8.344650268554688e-07,
+        "smooth_root_pos_max_abs": 5.960464477539062e-07,
+        "pelvis_world_max_abs": 7.152557373046875e-07,
+        "translation_max_m": 7.372687491624674e-07,
+        "local_rotation_max_degrees": 8.68418331004392e-05,
+        "world_fk_joint_max_m": 1.1755873856600374e-06
+      },
+      "load_peaks": [
+        {
+          "device": 0,
+          "allocated": 1947881472,
+          "reserved": 1969225728
+        },
+        {
+          "device": 1,
+          "allocated": 1947881472,
+          "reserved": 1969225728
+        }
+      ]
+    },
+    "pro-pp2-host690-v2": {
+      "scope": "warm-generator",
+      "median": 1.9185030330008885,
+      "minimum": 1.913982854999631,
+      "maximum": 1.922964490000595,
+      "rounds": [
+        1.913982854999631,
+        1.9166734350001207,
+        1.9185030330008885,
+        1.9211407420007163,
+        1.922964490000595
+      ],
+      "peaks": {
+        "0": {
+          "allocated": 1151989248,
+          "reserved": 1199570944
+        },
+        "1": {
+          "allocated": 1087911936,
+          "reserved": 1166016512
+        }
+      },
+      "metrics": {
+        "trans_max_abs": 0,
+        "shapes_max_abs": 0,
+        "rot6d_max_abs": 0,
+        "foot_contacts_max_abs": 0,
+        "local_joints_positions_max_abs": 0,
+        "smooth_root_pos_max_abs": 0,
+        "pelvis_world_max_abs": 0,
+        "translation_max_m": 0,
+        "local_rotation_max_degrees": 0,
+        "world_fk_joint_max_m": 0
+      },
+      "load_peaks": [
+        {
+          "device": 0,
+          "allocated": 1935282176,
+          "reserved": 1948254208
+        },
+        {
+          "device": 1,
+          "allocated": 942407680,
+          "reserved": 945815552
+        }
+      ]
+    },
+    "pro-pipeline60": {
+      "scope": "fresh-pipeline-from-canonical-video",
+      "median": 28.044532226002048,
+      "minimum": 27.923131750998436,
+      "maximum": 28.134011022000777,
+      "rounds": [
+        27.93289832499795,
+        28.044532226002048,
+        27.923131750998436,
+        28.134011022000777,
+        28.114858676999575
+      ],
+      "stage_medians": {
+        "track": 2.822041004001221,
+        "flow_camera": 0.004754466997837881,
+        "flow_features": 13.700379320001957,
+        "flowhmr": 6.020997896001063,
+        "correct": 0.2520098829991184,
+        "flow_export": 0.6324610749979911
+      }
+    },
+    "gb10-pipeline60": {
+      "scope": "fresh-pipeline-from-canonical-video",
+      "median": 40.65975787816569,
+      "minimum": 40.342966869007796,
+      "maximum": 40.74571011005901,
+      "rounds": [
+        40.342966869007796,
+        40.74571011005901,
+        40.554609671002254,
+        40.695123995887116,
+        40.65975787816569
+      ],
+      "stage_medians": {
+        "track": 3.572679638164118,
+        "flow_camera": 0.006070384057238698,
+        "flow_features": 23.045081407064572,
+        "flowhmr": 8.08891029912047,
+        "correct": 0.21649955096654594,
+        "flow_export": 0.7790253539569676
+      }
+    },
+    "gb10-pipeline690": {
+      "scope": "fresh-pipeline-from-canonical-video",
+      "median": 202.2368964261841,
+      "minimum": 195.55562672484666,
+      "maximum": 202.4697318209801,
+      "rounds": [
+        202.2368964261841,
+        202.4697318209801,
+        196.3313164950814,
+        195.55562672484666,
+        202.45704114204273
+      ],
+      "stage_medians": {
+        "track": 16.266500618075952,
+        "flow_camera": 46.72570499498397,
+        "flow_features": 103.47968943789601,
+        "flowhmr": 23.162680664099753,
+        "correct": 1.5292877908796072,
+        "flow_export": 5.444856239017099
+      }
+    },
+    "pro-pipeline690": {
+      "scope": "fresh-pipeline-from-canonical-video",
+      "median": 98.27732609500163,
+      "minimum": 98.22300511899812,
+      "maximum": 98.30590415900224,
+      "rounds": [
+        98.30590415900224,
+        98.27732609500163,
+        98.30147858500277,
+        98.27458068199849,
+        98.22300511899812
+      ],
+      "stage_medians": {
+        "track": 8.936223512999277,
+        "flow_camera": 10.351450186000875,
+        "flow_features": 54.838230915996974,
+        "flowhmr": 14.815110701001686,
+        "correct": 0.864727882999432,
+        "flow_export": 3.599941750002472
+      }
+    }
+  },
+  "limitations": [
+    "Different deployed software/CPU/OS versions; not an isolated GPU hardware comparison.",
+    "Cross-architecture H264 decoding differs; generator comparisons use identical cached tensors.",
+    "TP2 uses NCCL/TCP with P2P and SHM disabled; PP2 uses explicit CPU staging.",
+    "Memory statistics are PyTorch allocations, not total physical GPU or unified memory.",
+    "No ground-truth quality or all-model Ubuntu parity claim."
+  ]
+}
