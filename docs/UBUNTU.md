@@ -17,6 +17,10 @@ The CPU portability suite covers routing, pinned environments, cancellation, cac
 
 Clean amd64 installation and other models remain unverified. Interactive playback was measured while the desktop was locked and still needs testing on an unlocked desktop. On aarch64, see [DGX Spark and aarch64](#nvidia-dgx-spark-and-aarch64): complete model inference is pending memory headroom; CUDA operations and tracking have passed on GB10. See [Spark validation](SPARK_VALIDATION.md).
 
+Repeated PRO 4000/GB10 baselines and experimental dual-PRO-4000 TP2/PP2 follow
+[the benchmark protocol](BENCHMARK_PROTOCOL.md). The tools are separate from
+production inference; formal timing waits for complete GB10 migration validation.
+
 ## Prerequisites
 
 - 64-bit Ubuntu on x86-64 or aarch64, an NVIDIA GPU with a current driver, and OpenGL 4.3 for the GUI viewport.
