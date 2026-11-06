@@ -27,6 +27,16 @@ LOGGING_ONLY = {
 }
 
 
+# Reviewed Linux routing only (process flags, interpreter paths, PyOpenGL platform,
+# peak-memory reporting): identical numerical paths and Windows behavior. These keep
+# identities shared with baseline ef05127 so saved work stays valid on either system.
+PLATFORM_ONLY = {
+    "3bf3550a0eb3d2ee3fc3093677007bcb4660c4b33eb874e29397cd3be091590f": "883d9dde808cf27c86611cb85f0e28ffcb3541639d417d2f68c4c7e1b2d00855",
+    "c82d59be1ac12adb185452cc0efd0ff7f53374e9be0f977d66a5d618e5d62c5e": "77c7162093f5bbf9b4dba46287f6542d5069cd3aef24444f531eac94335bd82f",
+    "f16e32bb13e35b61e9fda45e6ffae09d441b3bea1d8848580ed38bad9818eeba": "b82861ea8496949c3b7d914a4b6eecf6400e61dcc008a188e2b7504c317a3012"
+}
+
+
 def code_hash(path):
     actual=sha256(path)
-    return LOGGING_ONLY.get(actual,POLICY_ONLY.get(actual,actual))
+    return PLATFORM_ONLY.get(actual,LOGGING_ONLY.get(actual,POLICY_ONLY.get(actual,actual)))

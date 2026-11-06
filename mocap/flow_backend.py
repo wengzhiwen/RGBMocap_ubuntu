@@ -12,6 +12,7 @@ from .model_session import set_memory_budget
 from .compute_policy import gpu_memory_fraction
 from .result_artifacts import file_stat
 from .resource_cache import code_hash
+from .process_memory import peak_rss_bytes
 
 VERSION=1
 MAX_FRAMES=5000  # Pinned FlowHMR per-branch RoPE table; 30 fps.
@@ -432,7 +433,7 @@ def run_stage(project,stage,result,emit,force=False):
     latest.setdefault('stages',{})[stage]=dict(status='complete',elapsed=time.monotonic()-started,output=str(output))
     atomic_json(project/'project.json',latest)
     emit('complete',stage=stage,output=str(output),cached=False,elapsed=time.monotonic()-started,
-         peak_ram_gib=psutil.Process().memory_info().peak_wset/1024**3,
+         peak_ram_gib=peak_rss_bytes()/1024**3,
          peak_cuda_allocated_gib=torch.cuda.max_memory_allocated()/1024**3 if torch.cuda.is_initialized() else 0)
 
 
@@ -480,4 +481,4 @@ def run_post(project,stage,result,emit,force=False):
     atomic_json(project/'project.json',latest)
     if stage in ('export','flow_export','rig','mesh'):(project/'flow_export_pending.json').unlink(missing_ok=True)
     emit('complete',stage=stage,output=str(output),cached=cached,elapsed=time.monotonic()-started,
-        peak_ram_gib=psutil.Process().memory_info().peak_wset/1024**3)
+        peak_ram_gib=peak_rss_bytes()/1024**3)

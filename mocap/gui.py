@@ -1590,6 +1590,9 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,PromptHMRWorkspace,MammaWo
                 helper.finished.connect(cancelled)
                 helper.start("taskkill.exe", ["/PID", str(worker.processId()), "/T", "/F"])
             else:
+                # Stop FFmpeg/HaMeR/Blender descendants before losing their parent PID.
+                from .linux_runtime import terminate_descendants
+                terminate_descendants(worker.processId())
                 worker.kill()
         self.status.setText("Cancelled. Completed stages will be reused next time.")
 

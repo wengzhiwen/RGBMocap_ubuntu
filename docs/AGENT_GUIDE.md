@@ -4,6 +4,8 @@ This guide is for agents helping users operate or modify RGB MoCap. It describes
 
 ## Start and update
 
+Linux setup, launching and the command-line interface are in [UBUNTU.md](UBUNTU.md); the rest of this section describes Windows.
+
 - Windows 64-bit, compatible NVIDIA GPU/driver and OpenGL 4.3 are required for the documented inference workflow. Other systems and GPUs were not comprehensively verified; see [validation](VALIDATION.md).
 - In a writable checkout, run `install.cmd` once. It sets up separate pinned profiles for ExMR, FlowHMR and GVHMR and their supported add-ons, PEAR support over the shared runtime, Blender 4.5, FFmpeg and the prebuilt native motion-correction module. It does not install only the selected model's runtime or obtain AI weights/body data. Downloading and disk space are required. Models are obtained separately; optional MAMMA uses Setup_MAMMA.cmd and PromptHMR uses Setup_PromptHMR.cmd.
 - Run `RGBMoCap.cmd`. Keep its command window open; launch errors, processing messages and app Console output are also sent there, but long messages can be truncated and a saturated output queue can drop messages. Within the GUI, **Help > Check System** checks the system.

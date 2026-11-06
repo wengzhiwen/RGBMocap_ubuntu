@@ -306,6 +306,9 @@ class CharacterWorkspace:
         p=self.character_process
         if not p:return
         self.character_cancelled=True;self.character_line='Cancelling character job...'
+        if __import__('os').name!='nt':
+            from .linux_runtime import terminate_descendants
+            terminate_descendants(p.processId());p.kill();return
         helper=QProcess(self);self._character_killer=helper
         helper.start('taskkill',['/PID',str(p.processId()),'/T','/F'])
         helper.finished.connect(helper.deleteLater)

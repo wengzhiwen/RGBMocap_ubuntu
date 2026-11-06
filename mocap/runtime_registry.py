@@ -17,6 +17,11 @@ PROFILES = {
     'exmr': dict(folder='runtime_exmr', dev='.venv-exmr', base=None, python='3.12.10', packages={'torch':'2.8.0+cu128','numpy':'2.3.5','scipy':'1.15.2','timm':'0.9.12'}),
 }
 
+def _linux():
+    """Non-Windows routing; the pinned Windows paths below are never reached there."""
+    from . import linux_runtime
+    return linux_runtime
+
 def profile_for(stage, args=()):
     if stage.startswith('exmr'): return 'exmr'
     if stage.startswith('flow'): return 'flow'
@@ -33,6 +38,7 @@ def profile_for(stage, args=()):
     return 'shared'
 
 def command(root,stage,args=(),*,frozen):
+    if os.name!='nt':return _linux().command(root,stage,args)
     root=Path(root);key=profile_for(stage,args);spec=PROFILES[key]
     if frozen or os.environ.get('RGB_MOCAP_MANAGED') == '1':
         base=PROFILES[spec['base']] if spec['base'] else spec
@@ -47,6 +53,7 @@ def command(root,stage,args=(),*,frozen):
 
 def activate(root,key,base_root=None):
     """Validate effective imports before loading model or CUDA modules."""
+    if os.name!='nt':return _linux().activate(root,key)
     import importlib.metadata as metadata
     import importlib.util
     import sys
