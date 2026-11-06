@@ -114,7 +114,8 @@ def variant_plan(variant, pins, gui, profile, python):
     for name in rows:
         pins.pop(normalize(name), None)
     # Installed on their own so that a missing GUI wheel cannot prevent CLI processing.
-    gui_pins = sorted(f'{name}=={version}' for key, (name, version) in gui.items() if pins.pop(key, None) is not None)
+    replacements = {normalize(name): version for name, version in variant.get('gui_packages', {}).items()}
+    gui_pins = sorted(f'{name}=={replacements.get(key, version)}' for key, (name, version) in gui.items() if pins.pop(key, None) is not None)
     unavailable = {}
     for name, row in variant.get('unavailable', {}).items():
         if profile in row['profiles'] and pins.pop(normalize(name), None) is not None:
@@ -233,6 +234,9 @@ def install_profile(uv, plan, wheels_root, work, allow_fallback):
     checks = (['gui', 'shared'] if gui_available else ['shared']) if plan['profile'] == 'shared' else [plan['profile']]
     for key in checks:
         run([python, '-I', '-X', 'utf8', ROOT / 'worker_boot.py', '--runtime-check', key])
+    if plan['profile'] == 'shared' and gui_available:
+        # Imports alone miss ABI-incompatible wheels that consume None references.
+        run([python, '-I', '-X', 'utf8', ROOT / 'tools/check_qt_runtime.py'])
     for name, reason in plan.get('unavailable', {}).items():
         print(f'NOT INSTALLED {name}: {reason}', flush=True)
     print('READY', plan['profile'], '(versions and import paths; CUDA has not been run)', flush=True)

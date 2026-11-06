@@ -31,6 +31,15 @@ independent pinned environments, native correction build, actual CUDA checks,
 60/690/451-frame FlowHMR + HaMeR cases, source FBX and native GUI project
 rendering. Interactive GB10 playback and target-side Blender remain unverified.
 
+ARM64 GUI deployments pin the PySide6/Essentials/Addons/shiboken6 quartet to
+6.7.3 in `installer/linux-aarch64.json`. The tested 6.8.3 ARM64 wheels import
+successfully on Python 3.10 but consume a `None` reference per ordinary void
+painting call, eventually aborting the GUI. The amd64/Windows 6.8.3 pins and
+numerical environments remain unchanged. Existing ARM64 installs should run
+`python3 tools/setup_ubuntu.py --profiles shared`, with the GUI closed.
+Setup and `./rgbmocap.sh doctor` now exercise these bindings using the headless
+`tools/check_qt_runtime.py` probe rather than relying only on import success.
+
 ## Prerequisites
 
 - 64-bit Ubuntu on x86-64 or aarch64, an NVIDIA GPU with a current driver, and OpenGL 4.3 for the GUI viewport.
@@ -131,7 +140,8 @@ aarch64 uses a separately pinned variant, chosen automatically from the machine 
 | Torch, shared and Flow | 2.7.1+cu128 | 2.9.1+cu130 |
 | Torch, ExMR and HaMeR | 2.8.0+cu128 | 2.9.1+cu130 |
 | torchvision | 0.22.1+cu128, 0.23.0+cu128 | 0.24.1 from the cu130 index |
-| Python, NumPy, SciPy, timm and all other pins | As above | Identical |
+| PySide6 / Essentials / Addons / shiboken6 | 6.8.3 | 6.7.3 (painting ABI check required) |
+| Python, NumPy, SciPy, timm and other numerical pins | As above | Identical |
 | ExMR Moving Camera | Available | Unavailable: `pycolmap` has no aarch64 wheel |
 | Native correction | SSE4.1/AVX | NEON through a compile-time adapter |
 
@@ -139,7 +149,7 @@ Why these choices:
 
 - The cu128 index has no aarch64 Torch 2.8.0, and the CUDA 13 stack is preferred for GB10 (`sm_121`). No code changes model equations, precision or temporal context. Torch itself differs from amd64, however, so results are not expected to be bit-identical.
 - `torchvision` has no local `+cu130` tag on aarch64, and PyPI has a different CPU build under the same version. Setup therefore hash-pins Torch and torchvision to the CUDA index. `doctor` reports a CPU build as a failure, and `doctor --gpu` additionally runs a real CUDA NMS on this variant.
-- All other pins, including PySide6, have aarch64 wheels on Ubuntu 24.04 (glibc 2.39). PySide6 installs in its own step: if it cannot be installed on another system, setup warns and CLI processing remains available.
+- All other required pins have aarch64 wheels on Ubuntu 24.04 (glibc 2.39); the GUI quartet uses the separate versions above. PySide6 installs in its own step: if it cannot be installed on another system, setup warns and CLI processing remains available.
 - `pycolmap` is imported only by ExMR's moving-camera odometry. FlowHMR and HaMeR do not use it, and importing it reports this reason instead of a bare missing-module error.
 - Blender has no official Linux aarch64 build. Character import, retargeting and Blender bundles need your own compatible Blender 4.5 through `RGBMOCAP_BLENDER`. Source FBX export does not use Blender.
 

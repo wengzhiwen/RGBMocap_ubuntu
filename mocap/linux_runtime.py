@@ -53,6 +53,15 @@ def linux_variant(machine=None):
     return _load_variant(normalize_machine(machine))
 
 
+def extra_packages(key, machine=None):
+    """GUI-only wheel replacements never enter numerical runtime identities."""
+    if key == 'gui':
+        variant = linux_variant(machine)
+        if variant and variant.get('gui_packages'):
+            return variant['gui_packages']
+    return EXTRA_PACKAGES.get(key, {})
+
+
 def variant_identity(machine=None):
     """Receipt keys naming the variant and its exact wheels; empty when PROFILES apply."""
     variant = linux_variant(machine)
@@ -126,7 +135,7 @@ def activate(root, key):
         raise RuntimeError(f'{key} runtime is missing {site}. {SETUP_HINT}')
     if (site / 'shared_runtime.pth').exists():
         raise RuntimeError(f'{key} uses a Windows-style overlay; Linux profiles must be self-contained. {SETUP_HINT}')
-    packages = {**spec['packages'], **EXTRA_PACKAGES.get(key, {})}
+    packages = {**spec['packages'], **extra_packages(key)}
     expected = site.resolve()
     imports = {}
     for name, version in packages.items():
@@ -134,7 +143,8 @@ def activate(root, key):
             found = metadata.distribution(name).version
         except metadata.PackageNotFoundError:
             raise RuntimeError(f'{name} is missing from {key}. {SETUP_HINT}') from None
-        module = importlib.util.find_spec(name)
+        # Addons and Essentials are distributions within the PySide6 package.
+        module = importlib.util.find_spec('PySide6' if name.startswith('PySide6-') else name)
         if found != version or module is None or not module.origin:
             raise RuntimeError(f'Incompatible {name} {found} in {key}; expected {version}. {SETUP_HINT}')
         origin = Path(module.origin).resolve()

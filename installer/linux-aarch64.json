@@ -3,6 +3,12 @@
   "name": "linux-aarch64-cu130",
   "machine": "aarch64",
   "cuda_index": "https://download.pytorch.org/whl/cu130",
+  "gui_packages": {
+    "PySide6": "6.7.3",
+    "PySide6-Addons": "6.7.3",
+    "PySide6-Essentials": "6.7.3",
+    "shiboken6": "6.7.3"
+  },
   "cuda_packages": {
     "torch": {
       "version": "2.9.1+cu130",

@@ -817,6 +817,18 @@ class ArchitectureSelection(unittest.TestCase):
         with mock.patch.object(linux_runtime, 'linux_variant', return_value=variant):
             self.assertNotEqual(linux_runtime.variant_identity('aarch64')['linux_variant']['pins'], first['pins'])
 
+    def test_arm_gui_override_does_not_change_numerical_identities(self):
+        self.assertEqual(linux_runtime.extra_packages('gui', 'aarch64'), {
+            'PySide6': '6.7.3', 'PySide6-Addons': '6.7.3',
+            'PySide6-Essentials': '6.7.3', 'shiboken6': '6.7.3'})
+        self.assertEqual(linux_runtime.extra_packages('gui', 'x86_64'), {'PySide6': '6.8.3'})
+        self.assertEqual(linux_runtime.extra_packages('flow', 'aarch64'), {})
+        identity = linux_runtime.variant_identity('aarch64')
+        variant = json.loads(json.dumps(linux_runtime.linux_variant('aarch64')))
+        variant['gui_packages']['PySide6'] = '0.0.0'
+        with mock.patch.object(linux_runtime, 'linux_variant', return_value=variant):
+            self.assertEqual(linux_runtime.variant_identity('aarch64'), identity)
+
     def test_unavailable_package_import_explains_itself(self):
         finder = linux_runtime.PostImportPatches({}, {'rgbmocap_absent_package': 'No ARM wheel; use Static Camera.'})
         with self.assertRaisesRegex(ModuleNotFoundError, 'No ARM wheel') as caught:
@@ -911,11 +923,12 @@ class AarchPlan(unittest.TestCase):
         self.assertNotIn('pycolmap', self.names(self.plan('exmr')['index']))
 
     def test_gui_is_separate_so_cli_survives_without_it(self):
-        self.assertEqual(self.names(self.plan('shared')['gui']), {'pyside6': '6.8.3', 'pyside6-addons': '6.8.3', 'pyside6-essentials': '6.8.3', 'shiboken6': '6.8.3'})
+        self.assertEqual(self.names(self.plan('shared')['gui']), {'pyside6': '6.7.3', 'pyside6-addons': '6.7.3', 'pyside6-essentials': '6.7.3', 'shiboken6': '6.7.3'})
         self.assertEqual(self.plan('flow')['gui'], [])
         amd = setup_ubuntu.profile_plan(ROOT, self.lock, 'shared', 'x86_64')
         self.assertNotIn('gui', amd)
         self.assertIn('pyside6', self.names(amd['index']))
+        self.assertEqual(self.names(amd['index'])['pyside6'], '6.8.3')
 
     def test_machine_markers_are_honored(self):
         metadata = '\n'.join(('Requires-Dist: nvidia-a==1; platform_system == "Linux" and platform_machine == "x86_64"',

@@ -526,6 +526,15 @@ def check_torchvision_builds():
     return rows
 
 
+def check_qt_runtime(env):
+    python = interpreter(ROOT, 'gui')
+    if not python.is_file():
+        return []  # check_profiles already reports the missing environment.
+    code, output = capture([python, '-I', '-X', 'utf8', ROOT / 'tools/check_qt_runtime.py'], env, 30)
+    return [check('Qt painting bindings', 'ok' if code == 0 else 'warn' if code == 2 else 'fail',
+                  last_line(output) if code == 0 else last_line(output) + ' Run tools/setup_ubuntu.py --profiles shared.')]
+
+
 def check_tools(env):
     from mocap.video import executable
     rows = []
@@ -635,6 +644,7 @@ def run_checks(env, gpu=False):
     rows = [check('platform', 'ok' if sys.platform == 'linux' else 'fail', sys.platform)]
     rows += check_architecture()
     rows += check_profiles(env)
+    rows += check_qt_runtime(env)
     rows += check_torchvision_builds()
     rows += check_tools(env)
     rows += check_libraries(env)
