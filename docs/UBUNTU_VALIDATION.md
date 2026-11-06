@@ -107,6 +107,27 @@ measurement. The zero-frame presentation report was obtained while the desktop
 was locked. Interactive playback remains to be tested on an unlocked desktop;
 no screen unlock or source-video modification was performed.
 
+After the user unlocked the desktop, a second real raw-mesh + bone-overlay
+playback check on the same 451-frame project presented 227 video frames in
+7.60 seconds (29.87 fps). Maximum video/skeleton and mesh/video frame differences
+were both zero; p95 frame interval was 34.66 ms and maximum 42.74 ms. It reported
+no mesh/bone renderer errors, no inference modules loaded, zero paused mesh
+compute dispatches and 0.0% measured paused CPU. The screenshot was inspected
+and showed the video, skeleton and native SMPL-H mesh. This validates that local
+unlocked-desktop playback interval, not every display/backend or long-session
+playback behavior. Private report/screenshot: `.setup/ubuntu/playback-unlocked.*`.
+
+The subsequent public 690-frame moving-camera benchmark completed one excluded
+warm-up and five fresh measured pipelines on both amd64 and GB10. See
+[the benchmark results](BENCHMARK_RESULTS_UBUNTU.md) for timings, inputs, runtime
+differences and the scope of actual dual-GPU validation. The expanded 153-test
+CPU suite passed on both hosts with two conditional skips, including active-gate
+and intentionally corrupted-reduction checks in the model-parallel tests.
+After the standalone peer diagnostic was added, the full CPU suite passed
+183 tests on each host with two conditional skips. The real two-GPU diagnostic
+returned the expected failed-direct/passed-host result on amd64; its single-GPU
+Spark invocation correctly returned Not Applicable.
+
 ## Foundation regression checks
 
 - 74 CPU tests ran under the pinned shared Python; 73 passed and the test for a

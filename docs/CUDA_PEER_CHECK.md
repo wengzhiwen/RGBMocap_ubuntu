@@ -33,6 +33,10 @@ to 1,048,582. Host-staged cases had zero mismatches in both layouts/directions.
 The earlier reverse-direction success does not establish that direction is
 reliable. Private evidence: `.setup/bench/peer-tool-both.json` and `.log`.
 
+On the actual single-GPU GB10 host, the tool returned `NOT_APPLICABLE` with exit
+3 before starting a worker. That is the intended scope result, not a peer pass
+or a failure of the separately validated FlowHMR pipeline.
+
 ## Commands
 
 Run from the repository root. The launcher needs `.venv` (for `psutil`) and the copies run in `.venv-flow`; both come from `tools/setup_ubuntu.py`. `nvidia-smi` must be on `PATH`. Under a Python without `psutil`, the launcher refuses before starting a worker.

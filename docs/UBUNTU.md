@@ -15,11 +15,15 @@ This fork adds a Linux route beside the Windows Git/CMD distribution, for amd64 
 
 The CPU portability suite covers routing, pinned environments, cancellation, cache identities and setup planning. Local GPU checks additionally completed a 451-frame FlowHMR + HaMeR + moving-camera + correction pipeline and verified its FBX import in Blender. The GUI starts and loads the resulting project. See [the detailed validation record](UBUNTU_VALIDATION.md) for tested settings and limits.
 
-Clean amd64 installation and other models remain unverified. Interactive playback was measured while the desktop was locked and still needs testing on an unlocked desktop. On aarch64, see [DGX Spark and aarch64](#nvidia-dgx-spark-and-aarch64): complete model inference is pending memory headroom; CUDA operations and tracking have passed on GB10. See [Spark validation](SPARK_VALIDATION.md).
+Clean amd64 installation and other models remain unverified. A subsequent unlocked-desktop playback check passed at 29.87 fps with zero observed video/skeleton/mesh frame differences. On aarch64, see [DGX Spark and aarch64](#nvidia-dgx-spark-and-aarch64): the complete 60-frame static-camera FlowHMR + HaMeR + correction + source-FBX and cache-rerun check passed on GB10 after memory was released with user authorization. See [Spark validation](SPARK_VALIDATION.md) for the tested subset and remaining limits.
 
 Repeated PRO 4000/GB10 baselines and experimental dual-PRO-4000 TP2/PP2 follow
 [the benchmark protocol](BENCHMARK_PROTOCOL.md). The tools are separate from
-production inference; formal timing waits for complete GB10 migration validation.
+production inference; timing began after complete GB10 migration validation.
+See [measured results](BENCHMARK_RESULTS_UBUNTU.md) for five-round baselines,
+the peer-transfer failure and the tested TP2/PP2 transport workarounds.
+The [standalone peer checker](CUDA_PEER_CHECK.md) validates actual copied values;
+advertised peer-access flags alone were insufficient on the tested dual-card host.
 
 ## Prerequisites
 
@@ -143,7 +147,7 @@ python3 tools/correction_crosscheck.py compare amd64.json arm64.json
 
 Spark notes:
 
-- GPU and CPU share memory on this system, so other GPU workloads reduce the RAM that Resource Safety measures. It stops workers when RAM headroom is low, as on other systems; how the adaptive batch choices behave on shared memory has not been measured.
+- GPU and CPU share memory on this system, so other GPU workloads reduce the RAM that Resource Safety measures. It stops workers when RAM headroom is low, as on other systems. Automatic SAM batching used 16 frames in the measured cases with ample RAM; performance under low shared-memory headroom remains unmeasured.
 - `doctor --gpu` allocates a small amount of GPU memory in each environment. Check for other workloads first on a shared machine.
 
 ### aarch64 validation status
@@ -157,7 +161,8 @@ Spark notes:
 | amd64-to-aarch64 correction comparison | Passed synthetic comparison and a private 451-frame input; see [measurements](SPARK_VALIDATION.md) |
 | CUDA on GB10 | Matmul and CUDA NMS passed in all three runtimes; FP16 convolution and FP32/FP16 attention also passed |
 | GB10 tracking | Video preparation and 16-frame GPU tracking passed |
-| Full GB10 FlowHMR + HaMeR, quality and desktop GUI | Pending sufficient memory and a visible desktop session |
+| Complete GB10 FlowHMR + HaMeR + correction + source FBX | Passed the 60-frame static-camera public sample, including cached rerun |
+| GB10 ground-truth quality and desktop GUI | Unverified; the host was operated through SSH |
 
 See the [validation record](UBUNTU_VALIDATION.md#arm64-cpu-checks) for details.
 

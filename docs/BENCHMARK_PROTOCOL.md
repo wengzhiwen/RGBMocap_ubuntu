@@ -5,6 +5,9 @@ PRO 4000 and GB10 baselines, then evaluate two-PRO-4000 TP2 and PP2 experiments.
 Preparation and CPU correctness tests can precede the migration gate; measured
 performance rounds and dual-GPU experiments wait for their prerequisite evidence.
 
+Completed measurements and limitations are in
+[BENCHMARK_RESULTS_UBUNTU.md](BENCHMARK_RESULTS_UBUNTU.md).
+
 ## Migration gate
 
 On GB10, complete a fresh FlowHMR + every-frame HaMeR + correction + source-export
@@ -13,11 +16,12 @@ outputs, expected frame counts, actual valid HaMeR predictions, exact retention
 of body/wrist/trajectory/shape/native contacts by finger refinement, selected-result
 receipts, export and a repeated cached run. Basic CUDA operations, tracking and
 native CPU correction alone do not satisfy this gate. No unrelated service is
-stopped and no memory cap is disabled to force the test to fit.
+stopped without explicit user authorization and no memory cap is disabled to
+force the test to fit.
 
-Current GB10 status and its external memory constraint are in
-[SPARK_VALIDATION.md](SPARK_VALIDATION.md). No formal performance baseline has
-been measured yet.
+Current GB10 status and the resolved external memory constraint are in
+[SPARK_VALIDATION.md](SPARK_VALIDATION.md). Formal baseline measurements began
+after the complete migration gate passed.
 
 ## Fixed inputs and scopes
 
@@ -59,8 +63,10 @@ may use separate benchmark environments; production pins stay unchanged.
 
 Record GPU names, driver, clocks/temperature/power observations, CPU, available
 RAM, Python/Torch/CUDA versions, precision, git/source identities and all options.
-Both PRO 4000 GPUs support P2P access; their topology is PHB (PCIe host bridge),
-with no NVLink. Measure communication overhead rather than assuming TP2 helps.
+Both PRO 4000 GPUs advertise P2P access; their topology is PHB (PCIe host bridge),
+with no NVLink. Actual direct copies failed verification on this host despite
+those flags. Use [the data-copy diagnostic](CUDA_PEER_CHECK.md) before trusting
+peer transfers, and measure communication overhead rather than assuming TP2 helps.
 
 ## Dual-GPU experiments
 
@@ -88,6 +94,15 @@ Experimental adapters and outputs remain separate from production inference and
 user result generations until correctness and performance evidence support any
 promotion. Raw data and generated motion stay under ignored `experiments/`;
 only curated methodology and aggregate findings belong in public documentation.
+
+The final generator measurements put RSS sampling in the separate launcher,
+outside the timed processes and their Python GIL. Each round records monotonic
+start/end times so external samples can be associated with it. Loading allocation
+peaks are retained before peak resets; unused PyTorch allocator blocks are released
+once before the excluded warm-up. This does not clear OS file caches. GPU results
+include code hashes and runtime/transport settings. The migration gate's model,
+auxiliary data, numerical code and fixed settings must match the current build;
+different clip conditioning is permitted as a separately identified case.
 
 ## Reproducible commands
 
@@ -153,6 +168,14 @@ For each mode `tp2` and `pp2`, run a new experiment:
   --output experiments/bench-tp2
 ```
 
+On the measured PRO 4000 host, direct peer copies failed real data verification.
+The successful TP2 test used the explicit NCCL/TCP environment in the results
+document; its default IPC/SHM transport did not pass. PP2 used
+`--mode pp2 --peer-transport host`. The separate fallback
+`--mode tp2 --tp-transport gloo-host` retains GPU computation and moves full FP32
+partial results through CPU Gloo reductions. Never combine these transport modes
+under a generic unexplained "dual GPU" result.
+
 The tool requires five measured single-GPU rounds plus an excluded warm-up on
 both platforms, identical weight/code/conditioning hashes and the actual PRO 4000
 reference artifact. It checks the dual-card runtime against that reference's
@@ -164,9 +187,11 @@ experimental adapters.
 
 ## Preparation evidence — 2026-11-06
 
-There are **no GB10 complete-pipeline passes, GPU TP2/PP2 passes or performance
-numbers** yet. Spark currently has about 7.7 GiB available because of unrelated
-work, which remains untouched.
+At initial preparation there were no GB10 complete-pipeline passes, GPU TP2/PP2
+passes or performance numbers. Spark had about 7.7 GiB available because of
+unrelated work. The user subsequently authorized stopping that service; the
+complete migration gate passed and formal baselines began afterward. The CPU
+preparation results below preceded those GPU measurements.
 
 Real CPU preparation checks on the amd64 host used the full 460,397,547-parameter
 checkpoint, identical cached 16-frame conditioning, seed 0 and 20 ODE steps:

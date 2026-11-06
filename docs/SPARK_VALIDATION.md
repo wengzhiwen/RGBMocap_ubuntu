@@ -4,12 +4,15 @@
 
 The Spark work extends the Ubuntu port to aarch64 while keeping the amd64 and
 Windows runtime pins. It prioritizes FlowHMR and its separate HaMeR refinement.
-Full motion inference on GB10 is still pending sufficient free unified memory.
+The complete 60-frame static-camera FlowHMR + HaMeR + correction + source-export
+validation has passed on GB10 after the user authorized releasing the existing
+GPU service. This is the tested subset, not validation of every model or GUI.
 The successful amd64 451-frame pipeline is recorded separately in
 [Ubuntu validation](UBUNTU_VALIDATION.md).
 
 Actual remote host: NVIDIA GB10 (compute capability 12.1), Ubuntu 24.04.5 LTS
-on aarch64, driver 580.178.04. Existing unrelated GPU work was preserved.
+on aarch64, driver 580.178.04. Existing unrelated GPU work was initially preserved
+and later stopped gracefully with explicit user authorization for these tests.
 
 ## CUDA operation checks
 
@@ -55,10 +58,11 @@ The fixture and licensed geometry remain private and excluded from Git.
 
 ## Memory and remaining work
 
-At bring-up, an unrelated workload left about 5.5–6.8 GiB of system memory
-available. Complete SAM/HaMeR inference has not been attempted under that
-constraint. The CUDA probes and CPU correction test completed and released
-their resources.
+At bring-up, an unrelated workload left about 5.5–7.7 GiB of system memory
+available. Full SAM/HaMeR inference was deferred under that constraint. After
+explicit user authorization, its named systemd user service was stopped
+gracefully, leaving about 118 GiB available. No model/data files were deleted,
+the service was not disabled, and Resource Safety remained enabled.
 
 GB10 shares RAM between CPU and GPU; `nvidia-smi` reporting framebuffer usage as
 unsupported is expected. Available system memory and CUDA allocation headroom
@@ -75,7 +79,7 @@ existing configured Spark host, not a clean operating-system installation.
 all three worker environments, and registered FlowHMR/HaMeR assets were ready.
 The real HaMeR hand-feature import chain and MANO preparation also succeeded.
 The CLI then prepared the bundled public sample and completed GPU actor tracking
-for 16 frames. No complete SAM or HaMeR model inference has been claimed.
+for 16 frames. These initial checks preceded the complete run below.
 
 The 102-test portability suite passed on amd64 and GB10 (two applicable skips on
 each initial run). The compiled ARM intrinsic semantics test was then executed
@@ -84,8 +88,8 @@ separately on GB10 with the fetched pinned header and passed. A separate synthet
 GB10; it changed 1,200 rotation values and exercised the real native solver.
 
 The amd64 FlowHMR + HaMeR command continued to reuse cached stages after the
-Spark changes. Remaining work is a fresh full Spark FlowHMR + HaMeR run with
-sufficient free memory, its export checks and desktop GUI/playback verification.
+Spark changes. The subsequent full run passed; Spark desktop GUI/playback
+verification remains pending because this host was tested through SSH.
 Optional models remain outside this validation scope. ExMR Moving Camera needs
 an unavailable ARM pycolmap build. Character/Blender exports need a compatible
 ARM64 Blender 4.5 installation; source FBX export is independent of Blender.
@@ -101,7 +105,41 @@ CPU test counts.
 The actual public `benchmark_flow.py migration` preflight deferred at 7.7 GiB
 available RAM, before creating an inference project. Its 32 GiB admission budget
 is conservative for this particular validation run, not a measured model minimum.
-The unrelated 85,041 MiB compute workload remained running. Complete GB10
-inference, formal single-GPU baselines and GPU TP2/PP2 trials are still pending.
+The unrelated 85,041 MiB compute workload remained running at that point. Complete
+GB10 inference, formal single-GPU baselines and GPU TP2/PP2 trials were then pending.
 See [the experiment protocol](BENCHMARK_PROTOCOL.md) for tools, CPU full-checkpoint
 agreement and the required order of the subsequent tests.
+
+## Complete FlowHMR and HaMeR validation
+
+The bundled public sample supplied a fresh 60-frame, 1920×1080, 30 fps case with
+explicit static camera, Fast SAM, default adaptive batching/cropping, FP32
+full-context FlowHMR (20 ODE steps, 256-query MATH attention), every-frame HaMeR
+and default contact correction. All stages completed through validated isolated
+worker environments with Resource Safety enabled.
+
+Both hands had valid predictions in all 60 frames. CPU inspection confirmed
+finite outputs; exact preservation of body/root/wrist rotations, translation,
+shape and native contacts by HaMeR; exact preservation of fingers by correction;
+current output receipts and selected-result BVH for both original and corrected
+motion; and actual native correction execution. Corrected source FBX exported
+successfully. A repeated CLI command reused tracking, camera, features, body
+generation and correction caches. Tensor hashes remained identical after that
+rerun. This establishes that case's functional compatibility, not ground-truth
+motion quality or equivalence with Windows.
+
+The repeatable machine-readable gate report is private under
+`experiments/bench-gb10-migration/migration.json`; it was produced by the actual
+public benchmark launcher, not a manual success marker. Subsequent timing scopes
+and longer cases are documented separately in the benchmark protocol/results.
+
+The complete bundled 690-frame (23-second) case then passed with Moving/Unknown
+Auto camera estimation, including 116 VGGT samples at interval six, Fast SAM,
+every-frame HaMeR, native correction and both previews. Both hands were valid in
+all 690 frames, and the artifact-preservation validator passed. Five subsequent
+fresh repetitions completed after an excluded warm-up. Source FBX from the 60-
+and 690-frame cases imported successfully in amd64 Blender 4.5.4 at 30 fps with
+the expected action ranges. This does not supply an ARM64 Blender runtime.
+
+[The performance results](BENCHMARK_RESULTS_UBUNTU.md) contain the actual PRO
+4000/GB10 baselines, generator-only TP2/PP2 measurements and decoder differences.
