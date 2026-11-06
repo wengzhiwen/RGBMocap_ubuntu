@@ -33,6 +33,8 @@ def main():
                  '-DPython3_EXECUTABLE='+str(args.python),'-DCMAKE_EXPORT_NO_PACKAGE_REGISTRY=ON']
     if (args.deps/'pybind11/share/cmake/pybind11').exists():
         command+=['-Dpybind11_DIR='+str((args.deps/'pybind11/share/cmake/pybind11').resolve())]
+    if (args.deps/'sse2neon').exists():
+        command+=['-DFETCHCONTENT_SOURCE_DIR_SSE2NEON='+str((args.deps/'sse2neon').resolve())]
     if (args.deps/'eigen-3.4.0').exists():
         command+=['-DFETCHCONTENT_SOURCE_DIR_EIGEN='+str((args.deps/'eigen-3.4.0').resolve())]
     with (build/'build.log').open('w',encoding='utf-8') as log:

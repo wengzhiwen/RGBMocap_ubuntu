@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "name": "linux-aarch64-cu130",
+  "machine": "aarch64",
+  "cuda_index": "https://download.pytorch.org/whl/cu130",
+  "cuda_packages": {
+    "torch": {
+      "version": "2.9.1+cu130",
+      "sha256": {
+        "3.10": "a4dd4fd6ee07f15e825348608aba5a2815674624d450af4a413f928b0d80fb4d",
+        "3.12": "6e7f84cb10c7e7d9f862c318f056d64840544ab4f0bcbf8cf7ed6047fe04051f"
+      }
+    },
+    "torchvision": {
+      "version": "0.24.1",
+      "sha256": {
+        "3.10": "bfd03db06f624a7e921f9cc5bb03d4b6afa13b5f9e225610a672dba09e5d0dca",
+        "3.12": "89743dcee13e943f58b37c7647aff14b5bb24c11c84826376d457acf97586fec"
+      }
+    }
+  },
+  "unavailable": {
+    "pycolmap": {
+      "profiles": ["exmr"],
+      "reason": "pycolmap has no Linux aarch64 wheel for this Python, so ExMR Moving Camera (SimpleVO) is unavailable on this system. Use Static Camera for ExMR. FlowHMR and HaMeR do not use it."
+    }
+  }
+}

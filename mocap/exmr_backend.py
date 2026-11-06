@@ -9,6 +9,7 @@ import numpy as np
 from .paths import ROOT, HOME, UPSTREAM
 from .storage import atomic_json, sha256
 from .resource_cache import code_hash
+from .runtime_identity import variant_identity
 from .model_session import set_memory_budget
 from .compute_policy import gpu_memory_fraction
 from .result_artifacts import file_stat
@@ -149,7 +150,7 @@ def identity(project,stage):
         upstream_api=sha256(UPSTREAM/'ExMR/exmr/pipeline.py'),
         motion_solver={name:sha256(UPSTREAM/'ExMR/exmr'/name) for name in
             ('model/exmr.py','model/global_traj.py','model/ik.py','geometry/camera.py')} if stage=='exmr' else {},
-        code=code_hash(Path(__file__)),upstream=sha256(UPSTREAM/'ExMR/RGB_MOCAP_PROVENANCE.json'))
+        code=code_hash(Path(__file__)),upstream=sha256(UPSTREAM/'ExMR/RGB_MOCAP_PROVENANCE.json'),**variant_identity())
 
 
 def frame_dir(project,n):

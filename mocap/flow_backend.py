@@ -13,6 +13,7 @@ from .compute_policy import gpu_memory_fraction
 from .result_artifacts import file_stat
 from .resource_cache import code_hash
 from .process_memory import peak_rss_bytes
+from .runtime_identity import variant_identity
 
 VERSION=1
 MAX_FRAMES=5000  # Pinned FlowHMR per-branch RoPE table; 30 fps.
@@ -146,7 +147,7 @@ def identity(project,stage):
     import torch
     return dict(version=VERSION,stage=stage,inputs=files,camera_interval=selected if stage=='flow_camera' else None,
         models={key:file_stat(BY_KEY[key].path) for key in STAGE_REQUIREMENTS[stage] if not (stage=='flow_camera' and selected==-1)},
-        code=code,runtime=[str(torch.__version__),torch.version.cuda],frames=state['frames'],fps=state['fps'],take=state.get('person_frames'))
+        code=code,runtime=[str(torch.__version__),torch.version.cuda],frames=state['frames'],fps=state['fps'],take=state.get('person_frames'),**variant_identity())
 
 
 def validate_motion(output,n):

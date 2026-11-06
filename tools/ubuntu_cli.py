@@ -22,7 +22,7 @@ sys.dont_write_bytecode = True
 os.environ.pop('PYTHONHOME', None)
 os.environ.pop('PYTHONPATH', None)
 
-from mocap.linux_runtime import correction_path, interpreter, runtime_environment  # noqa: E402
+from mocap.linux_runtime import SUPPORTED_MACHINES, correction_path, effective_profile, interpreter, linux_variant, normalize_machine, runtime_environment  # noqa: E402
 
 # mocap.paths reads RGB_MOCAP_DATA when it is first imported.
 os.environ.update(runtime_environment(ROOT))
@@ -340,12 +340,15 @@ def command_stages(args):
     for stage in KNOWN_STAGES:
         key = profile_for(stage, ())
         routed[stage] = dict(profile=key, environment=PROFILES[key]['dev'])
-    value = dict(flowhmr_pipeline=MOTION_TOOLS['flowhmr'].stages(), flowhmr_corrected_pipeline=MOTION_TOOLS['flowhmr'].stages(correction=True),
+    value = dict(machine=normalize_machine(), variant=(linux_variant() or {}).get('name'),
+                 torch={key: effective_profile(key)['packages']['torch'] for key in PROFILES},
+                 flowhmr_pipeline=MOTION_TOOLS['flowhmr'].stages(), flowhmr_corrected_pipeline=MOTION_TOOLS['flowhmr'].stages(correction=True),
                  hamer=dict(runs_in='exmr', note='A child of flowhmr; enable it with flow --hamer.'), stages=routed,
                  note='rig/mesh/export/correct/character route by saved project model when --project is given.')
     if args.json:
         print(json.dumps(value, indent=2))
         return 0
+    print(f"Machine:          {value['machine']} ({value['variant'] or 'standard pins'})")
     print('FlowHMR:          ' + ' -> '.join(value['flowhmr_pipeline']))
     print('With correction:  ' + ' -> '.join(value['flowhmr_corrected_pipeline']))
     print('HaMeR:            optional child of flowhmr, in .venv-exmr (flow --hamer)')
@@ -382,11 +385,39 @@ def check_profiles(env):
         name = f'runtime {key}'
         python = interpreter(ROOT, key)
         absent = 'fail' if key in REQUIRED_PROFILES else 'warn'
+        # A variant may lack GUI wheels on some systems; the CLI remains usable without them.
+        if key == 'gui' and linux_variant() is not None:
+            absent = 'warn'
         if not python.is_file():
             rows.append(check(name, absent, f'{python.parent.parent.name} is missing'))
             continue
         code, output = capture([python, '-I', '-X', 'utf8', ROOT / 'worker_boot.py', '--runtime-check', key], env)
         rows.append(check(name, 'ok' if code == 0 else absent, python.parent.parent.name if code == 0 else last_line(output)))
+    return rows
+
+
+def check_architecture():
+    machine = normalize_machine()
+    variant = linux_variant()
+    if machine not in SUPPORTED_MACHINES:
+        return [check('architecture', 'fail', f'{machine}: no pinned wheels; supported: {", ".join(SUPPORTED_MACHINES)}')]
+    if variant is None:
+        return [check('architecture', 'ok', f'{machine}: standard pins')]
+    rows = [check('architecture', 'ok', f"{machine}: {variant['name']}, Torch {variant['cuda_packages']['torch']['version']}")]
+    for name, row in variant.get('unavailable', {}).items():
+        rows.append(check(f'not available: {name}', 'warn', row['reason']))
+    return rows
+
+
+def check_torchvision_builds():
+    """PyPI's aarch64 torchvision is a CPU build with the same version as the CUDA one."""
+    if linux_variant() is None:
+        return []
+    rows = []
+    for folder in dict.fromkeys(effective_profile(key)['dev'] for key in ('shared', 'flow', 'exmr', 'hand', 'htd')):
+        for library in sorted((ROOT / folder / 'lib').glob('python*/site-packages/torchvision/_C*.so')):
+            cuda = b'libcudart' in library.read_bytes()
+            rows.append(check(f'torchvision build {folder}', 'ok' if cuda else 'fail', 'links the CUDA runtime' if cuda else 'CPU build; rerun tools/setup_ubuntu.py'))
     return rows
 
 
@@ -405,7 +436,7 @@ def check_tools(env):
     try:
         path = blender()
     except RuntimeError:
-        return rows + [check('blender', 'warn', 'Missing. Needed for character and Blender export only; see docs/UBUNTU.md.')]
+        return rows + [check('blender', 'warn', 'Missing. Needed for character import, retargeting and Blender bundles only; see docs/UBUNTU.md.')]
     code, output = capture([path, '--version'], env, 60)
     first = output.splitlines()[0] if output else ''
     rows.append(check('blender', 'ok' if code == 0 and ' 4.5' in first else 'warn', f'{path}: {first}'))
@@ -470,7 +501,12 @@ def check_gpu(env, real=False):
     if not real:
         return rows
     code_text = ('import json,sys;sys.path.insert(0,sys.argv[1]);from mocap.runtime_registry import activate;activate(sys.argv[1],sys.argv[2]);'
-                 'from mocap.diagnostics import collect;print("@@DIAG@@"+json.dumps(collect()))')
+                 'from mocap.diagnostics import collect;value=collect()\n'
+                 'try:\n'
+                 ' import torch,torchvision;boxes=torch.tensor([[0.,0.,1.,1.],[0.,0.,1.,1.]],device="cuda");'
+                 'value["torchvision_nms_verified"]=torchvision.ops.nms(boxes,torch.tensor([.9,.8],device="cuda"),.5).tolist()==[0]\n'
+                 'except Exception as error:value["torchvision_nms_error"]=str(error)\n'
+                 'print("@@DIAG@@"+json.dumps(value))')
     for key in ('shared', 'flow', 'exmr'):
         python = interpreter(ROOT, key)
         if not python.is_file():
@@ -480,14 +516,21 @@ def check_gpu(env, real=False):
         line = next((text for text in output.splitlines() if text.startswith('@@DIAG@@')), None)
         value = json.loads(line[len('@@DIAG@@'):]) if line else {}
         passed = code == 0 and value.get('cuda') is True and value.get('cuda_matmul_verified') is True
+        # Standard pins carry a tagged CUDA torchvision; a variant's untagged one must prove it.
+        if linux_variant() is not None:
+            passed = passed and value.get('torchvision_nms_verified') is True
         rows.append(check(f'CUDA {key}', 'ok' if passed else 'fail',
-                          f"{value.get('torch')} {value.get('gpu')} matmul={value.get('cuda_matmul_verified')}" if value else last_line(output)))
+                          f"{value.get('torch')} {value.get('gpu')} sm_{''.join(map(str, value.get('compute_capability') or []))} "
+                          f"matmul={value.get('cuda_matmul_verified')} nms={value.get('torchvision_nms_verified', value.get('torchvision_nms_error'))}"
+                          if value else last_line(output)))
     return rows
 
 
 def run_checks(env, gpu=False):
     rows = [check('platform', 'ok' if sys.platform == 'linux' else 'fail', sys.platform)]
+    rows += check_architecture()
     rows += check_profiles(env)
+    rows += check_torchvision_builds()
     rows += check_tools(env)
     rows += check_libraries(env)
     rows += check_correction(env)

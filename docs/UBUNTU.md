@@ -1,6 +1,6 @@
 # RGB MoCap on Ubuntu
 
-This fork adds a Linux route beside the Windows Git/CMD distribution. FlowHMR and its optional HaMeR finger refinement are the priority. Windows behavior, inference and receipts stay as they were; see [what changed](#how-the-linux-route-works).
+This fork adds a Linux route beside the Windows Git/CMD distribution, for amd64 and for aarch64 systems such as NVIDIA DGX Spark. FlowHMR and its optional HaMeR finger refinement are the priority. Windows behavior, inference and receipts stay as they were; see [what changed](#how-the-linux-route-works).
 
 ## Status
 
@@ -15,11 +15,11 @@ This fork adds a Linux route beside the Windows Git/CMD distribution. FlowHMR an
 
 The CPU portability suite covers routing, pinned environments, cancellation, cache identities and setup planning. Local GPU checks additionally completed a 451-frame FlowHMR + HaMeR + moving-camera + correction pipeline and verified its FBX import in Blender. The GUI starts and loads the resulting project. See [the detailed validation record](UBUNTU_VALIDATION.md) for tested settings and limits.
 
-Clean installation and other models remain unverified. Interactive playback was measured while the desktop was locked and still needs testing on an unlocked desktop.
+Clean amd64 installation and other models remain unverified. Interactive playback was measured while the desktop was locked and still needs testing on an unlocked desktop. On aarch64, see [DGX Spark and aarch64](#nvidia-dgx-spark-and-aarch64): complete model inference is pending memory headroom; CUDA operations and tracking have passed on GB10. See [Spark validation](SPARK_VALIDATION.md).
 
 ## Prerequisites
 
-- 64-bit Ubuntu, an NVIDIA GPU with a current driver, and OpenGL 4.3 for the GUI viewport.
+- 64-bit Ubuntu on x86-64 or aarch64, an NVIDIA GPU with a current driver, and OpenGL 4.3 for the GUI viewport.
 - [uv](https://docs.astral.sh/uv/) (0.13.1 is what the Windows lock pins). `setup_ubuntu.py` finds it on `PATH`, at `.bootstrap/bin/uv`, or through `--uv`.
 - FFmpeg and FFprobe, either on `PATH` or as `tools/bin/ffmpeg` and `tools/bin/ffprobe` without a suffix.
 
@@ -34,13 +34,13 @@ The setup never runs `apt`. Without sudo, unpack a library into the private `.ru
 ```bash
 mkdir -p .runtime/lib /tmp/glu && cd /tmp/glu && apt-get download libglu1-mesa
 dpkg-deb -x libglu1-mesa_*.deb extracted
-cp -a extracted/usr/lib/x86_64-linux-gnu/libGLU.so.1* "$OLDPWD/.runtime/lib/"
+cp -a extracted/usr/lib/*/libGLU.so.1* "$OLDPWD/.runtime/lib/"
 ```
 
 ## Set up
 
 ```bash
-python3 tools/setup_ubuntu.py --plan                  # print exact pins
+python3 tools/setup_ubuntu.py --plan                  # print exact pins; add --machine aarch64 or x86_64 to plan for another system
 python3 tools/setup_ubuntu.py                         # .venv, .venv-flow, .venv-exmr
 python3 tools/setup_ubuntu.py --stage-assets          # hash-checked auxiliary files, no weights
 python3 tools/setup_ubuntu.py --profiles shared --build-correction   # native correction module
@@ -60,6 +60,7 @@ python3 tools/setup_ubuntu.py --profiles shared --build-correction   # native co
 - Linux CUDA requirements declared by the Torch wheel, such as `nvidia-*` and `triton`, are added and recorded in `<venv>/rgbmocap-linux.json`. Profiles using `iopath` also receive `portalocker` from the existing pinned ExMR profile, satisfying its Linux file-lock dependency.
 - Python and the uv cache stay in `.runtime/python` and `.cache/uv`. Identical wheels are hardlinked from that cache, so repeated Torch files are not stored once per environment when the cache and venvs share a filesystem.
 - Each environment must pass its activation check before setup reports it ready. If uv cannot provide an exact Python, setup stops unless you pass `--python-patch-fallback`; the accepted same-minor patch is then recorded and allowed by activation.
+- Setup validates versions and import locations only, and it records `cuda_verified: false`. Importing Torch does not show that CUDA works: run `./rgbmocap.sh doctor --gpu`, then a real clip.
 
 Models are obtained separately, as on Windows: use **Model Manager**, or the `import_model` stage below. Do not copy runtime folders from a Windows install. Model receipts record file size and timestamp, so a copied file that shows as not ready should be imported again rather than having its receipt edited.
 
@@ -99,10 +100,59 @@ Limits compared with the GUI:
 
 ## Native correction, FFmpeg and Blender
 
-- **Correction.** Build with `python3 tools/build_motion_correction.py --python .venv/bin/python`, which needs CMake, a C++17 compiler and Git to fetch the pinned pybind11 and Eigen sources. The module goes to `third_party/KimodoMotionCorrection/bin/`, where it is ignored by Git. The Python 3.10 environments share it. It is a local build: the Windows prebuilt binary's validation does not transfer to it, so check results before relying on them. Correction, and only correction, needs this module.
+- **Correction.** Build with `python3 tools/build_motion_correction.py --python .venv/bin/python`, which needs CMake, a C++17 compiler and Git to fetch the pinned pybind11 and Eigen sources. The module goes to `third_party/KimodoMotionCorrection/bin/`, where it is ignored by Git. The Python 3.10 environments share it. It is a local build: the Windows prebuilt binary's validation does not transfer to it, so check results before relying on them. Correction, and only correction, needs this module. Each module name carries its Python and CPU tag, so a build from another architecture is ignored.
 - **FFmpeg.** Discovery order is `tools/bin/<name>`, then `PATH`.
 - **Blender 4.5.** Discovery order is `RGBMOCAP_BLENDER` (a file or a folder), `runtime_character/blender`, then `PATH`. It is needed for character import, retargeting and Blender bundles, not for source FBX export.
 - **PyOpenGL.** On Linux, ExMR and HaMeR use `PYOPENGL_PLATFORM=egl` unless you set another value. Importing pyrender then needs `libGLU.so.1` and `libEGL.so.1`, even though inference does not render.
+
+## NVIDIA DGX Spark and aarch64
+
+aarch64 uses a separately pinned variant, chosen automatically from the machine type. Windows and amd64 keep the pins above, and `PROFILES` is unchanged.
+
+| | amd64 | aarch64 variant `linux-aarch64-cu130` |
+| --- | --- | --- |
+| Torch, shared and Flow | 2.7.1+cu128 | 2.9.1+cu130 |
+| Torch, ExMR and HaMeR | 2.8.0+cu128 | 2.9.1+cu130 |
+| torchvision | 0.22.1+cu128, 0.23.0+cu128 | 0.24.1 from the cu130 index |
+| Python, NumPy, SciPy, timm and all other pins | As above | Identical |
+| ExMR Moving Camera | Available | Unavailable: `pycolmap` has no aarch64 wheel |
+| Native correction | SSE4.1/AVX | NEON through a compile-time adapter |
+
+Why these choices:
+
+- The cu128 index has no aarch64 Torch 2.8.0, and the CUDA 13 stack is preferred for GB10 (`sm_121`). No code changes model equations, precision or temporal context. Torch itself differs from amd64, however, so results are not expected to be bit-identical.
+- `torchvision` has no local `+cu130` tag on aarch64, and PyPI has a different CPU build under the same version. Setup therefore hash-pins Torch and torchvision to the CUDA index. `doctor` reports a CPU build as a failure, and `doctor --gpu` additionally runs a real CUDA NMS on this variant.
+- All other pins, including PySide6, have aarch64 wheels on Ubuntu 24.04 (glibc 2.39). PySide6 installs in its own step: if it cannot be installed on another system, setup warns and CLI processing remains available.
+- `pycolmap` is imported only by ExMR's moving-camera odometry. FlowHMR and HaMeR do not use it, and importing it reports this reason instead of a bare missing-module error.
+- Blender has no official Linux aarch64 build. Character import, retargeting and Blender bundles need your own compatible Blender 4.5 through `RGBMOCAP_BLENDER`. Source FBX export does not use Blender.
+
+Native correction compiles the same numerical C++ source. `compat/aarch64/immintrin.h` and the pinned `sse2neon` header map its SSE intrinsics to NEON. Flags keep x86's results where defaults differ: no fused multiply-add, signed `char`, and NaN-aware min/max. Hardware square root and division are bit-exact in the included compiled test. The estimate intrinsics (`rcpps`, `rsqrtps`) have no callers in the solver path. Other math, such as Eigen and `libm`, can still round differently, so compare builds with:
+
+```bash
+.venv/bin/python -I -B tools/correction_crosscheck.py run --output amd64.json   # on amd64
+.venv/bin/python -I -B tools/correction_crosscheck.py run --output arm64.json   # on aarch64
+python3 tools/correction_crosscheck.py compare amd64.json arm64.json
+```
+
+Spark notes:
+
+- GPU and CPU share memory on this system, so other GPU workloads reduce the RAM that Resource Safety measures. It stops workers when RAM headroom is low, as on other systems; how the adaptive batch choices behave on shared memory has not been measured.
+- `doctor --gpu` allocates a small amount of GPU memory in each environment. Check for other workloads first on a shared machine.
+
+### aarch64 validation status
+
+| Check | Status |
+| --- | --- |
+| Wheel availability for every pin, Python 3.10 and 3.12 | Checked with uv on Ubuntu 24.04 aarch64 |
+| Setup with hash-pinned wheels; activation | Passed on both the ARM CPU host and GB10 for shared, Flow and ExMR |
+| FlowHMR and HaMeR import chains; base GUI start offscreen; `prepare` worker | Run on the same machine, with no weights or GPU |
+| Native correction build; semantics test; determinism on synthetic motion | Run on the same machine |
+| amd64-to-aarch64 correction comparison | Passed synthetic comparison and a private 451-frame input; see [measurements](SPARK_VALIDATION.md) |
+| CUDA on GB10 | Matmul and CUDA NMS passed in all three runtimes; FP16 convolution and FP32/FP16 attention also passed |
+| GB10 tracking | Video preparation and 16-frame GPU tracking passed |
+| Full GB10 FlowHMR + HaMeR, quality and desktop GUI | Pending sufficient memory and a visible desktop session |
+
+See the [validation record](UBUNTU_VALIDATION.md#arm64-cpu-checks) for details.
 
 ## How the Linux route works
 
@@ -111,6 +161,7 @@ Limits compared with the GUI:
 | Routing | `runtime_registry.command/activate` defer to `mocap/linux_runtime.py` when `os.name != 'nt'` | Windows paths stay untouched and `PROFILES` is unchanged, because receipts embed it |
 | Worker start | `.venv-*/bin/python -I -X utf8 worker_boot.py <stage>` | Same isolated UTF-8 launch as a managed install |
 | Validation | `sys.prefix` must be the profile's venv; exact Python; pinned versions; imports inside its site-packages; no overlay `.pth` | Comparing resolved interpreters cannot tell venvs apart, because they share a base Python |
+| Architecture | `effective_profile` returns `PROFILES[key]` itself on amd64, or a copy with `installer/linux-aarch64.json` applied | Receipts on amd64 stay byte-identical, and the variant can never leak into them |
 | Peak memory | `mocap/process_memory.py`: `peak_wset` on Windows, `ru_maxrss` × 1024 on Linux | psutil has no `peak_wset` on Linux |
 | Native correction | Linux activation installs a post-import patch for `correction.backend` | `correction.py` is byte-hashed into receipts; see below |
 | Process control | `creationflags` falls back to 0; cancel stops descendants through psutil | `taskkill` and Windows flags do not exist on Linux |
@@ -122,6 +173,7 @@ Saved work stays valid because receipts still see baseline code identities:
 - `mocap/worker.py`, `mocap/exmr_backend.py` and `mocap/flow_hamer.py` are hashed with `code_hash`. Their Linux routing edits are registered in `PLATFORM_ONLY` in `mocap/resource_cache.py`, which maps the exact new file hash to the baseline identity. This uses the project's mechanism for reviewed non-numerical changes. Only add an alias when no numerical path changed.
 - `correction.py`, `flow_correction.py`, `mixamo_data.py`, `handflow.py` and `handflow_engine.py` are hashed directly or stat-checked, so they must stay byte-identical. That is why correction uses an import-time patch and HandFlow's PyOpenGL value is handled by an import guard rather than edits.
 - `flow_backend.py` is only identified by selected functions, and the edited reporting code is outside them.
+- `mocap/runtime_identity.py` adds a `linux_variant` key (name, machine and a digest of the exact wheels) to stage, FlowHMR and ExMR receipts only on a variant, and adds nothing on Windows and amd64. HaMeR's `source_identity` records the runtime actually used. A project moved between architectures therefore recomputes its stages instead of reusing another build's results.
 
 `tools/tests/` pins all of this, and fails if one of these files changes without a reviewed update.
 
@@ -156,7 +208,7 @@ After each merge:
    ```
    Never map onto an older identity when upstream changed numerical code; the point is that real changes invalidate caches.
 4. **New Windows-only code.** Search upstream changes for `creationflags=0x`, `.exe`, `Scripts/python`, `peak_wset`, `num_handles` and `win32`. Prefer an `os.name` branch in unhashed files. Check whether a file is hashed before editing it (`code_hash`, `sha256(`, `file_stat(`, `inspect.getsource`).
-5. **Pins.** The readable pins must still match the lock; a test checks this. New Windows-only packages go in `WINDOWS_ONLY`.
+5. **Pins.** The readable pins must still match the lock; a test checks this. New Windows-only packages go in `WINDOWS_ONLY`. If upstream changes Torch pins, review `installer/linux-aarch64.json` and rerun the aarch64 wheel check: `python3 tools/setup_ubuntu.py --plan --machine aarch64`, then `uv pip install --dry-run --no-deps --only-binary :all:` for its pins.
 6. **Test constants.** Update `BASE_SHA`, the digests and the identity tables in `tools/tests/test_ubuntu_portability.py` to the new upstream values, and update the baseline above.
 7. **Verify.** Run `python3 -m unittest discover -s tools/tests -v` and `python3 tools/check_source.py`, then `./rgbmocap.sh doctor --gpu` and a real FlowHMR + HaMeR clip. Confirm that re-running it reports cached stages, and only then merge the sync branch.
 

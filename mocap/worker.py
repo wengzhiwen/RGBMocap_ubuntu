@@ -12,6 +12,7 @@ from .paths import ROOT
 from .storage import atomic_json, sha256
 from .resource_cache import code_hash
 from .process_memory import peak_rss_bytes
+from .runtime_identity import variant_identity
 from .motion_tools import MOTION_TOOLS, resolve_motion_result, RESULTS, result_sources, result_options, result_is_current, base_result, body_result, has_handflow, require_supported_project, UnsupportedMotionTool
 
 PREFIX = "@@MOCAP@@"
@@ -126,6 +127,7 @@ def fingerprint(stage, project, result="auto", _worker_hash=None, _legacy_routin
     for key in STAGE_REQUIREMENTS.get(stage, ()):
         path = BY_KEY[key].path
         identity["models"].append((key, path.stat().st_size, path.stat().st_mtime_ns))
+    identity.update(variant_identity())
     return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
 
 

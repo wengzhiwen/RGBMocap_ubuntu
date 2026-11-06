@@ -53,7 +53,7 @@ they are not bundled with the application.
 Other runtime packages retain their included licenses. Supporting notices include
 [PyTorch3D transforms (BSD)](native_compat/LICENSE),
 [Noto Sans KR (SIL OFL)](assets/fonts/OFL.txt), and
-[Eigen / pybind11 notices](third_party/KimodoMotionCorrection/notices).
+[Eigen / pybind11 notices](third_party/KimodoMotionCorrection/notices). On aarch64 Linux, the local build also fetches the pinned MIT-licensed [sse2neon](https://github.com/DLTcollab/sse2neon) header; see [its license](third_party/KimodoMotionCorrection/notices/sse2neon-LICENSE).
 
 ## Attribution and local adaptations
 

@@ -7,6 +7,7 @@ import ast
 import hashlib
 import importlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -146,7 +147,8 @@ class VenvActivation(TempRoot):
     def setUp(self):
         super().setUp()
         self.key = 'exmr' if sys.version_info[:2] == (3, 12) else 'shared'
-        self.spec = runtime_registry.PROFILES[self.key]
+        # The pins this host's activation really enforces, including any architecture variant.
+        self.spec = linux_runtime.effective_profile(self.key)
         self.venv = self.root / self.spec['dev']
         python = getattr(sys, '_base_executable', sys.executable)
         subprocess.run([python, '-m', 'venv', '--without-pip', str(self.venv)], check=True)
@@ -386,8 +388,8 @@ class SetupPlan(TempRoot):
     def setUpClass(cls):
         cls.lock = json.loads((ROOT / 'installer/runtime-lock.json').read_bytes())
 
-    def plan(self, profile):
-        return setup_ubuntu.profile_plan(ROOT, self.lock, profile)
+    def plan(self, profile, machine='x86_64'):
+        return setup_ubuntu.profile_plan(ROOT, self.lock, profile, machine)
 
     @staticmethod
     def pins(plan):
@@ -431,7 +433,7 @@ class SetupPlan(TempRoot):
 
     def test_bundled_wheels_are_reconstructed_from_source(self):
         lock = setup_ubuntu.prepared_lock(self.root)
-        plan = setup_ubuntu.profile_plan(ROOT, lock, 'shared')
+        plan = setup_ubuntu.profile_plan(ROOT, lock, 'shared', 'x86_64')
         self.assertEqual(plan['wheels'], ['wheels/antlr4_python3_runtime-4.9.3-py3-none-any.whl', 'wheels/chumpy-0.70-py3-none-any.whl'])
         import zipfile
         with zipfile.ZipFile(self.root / plan['wheels'][1]) as archive:
@@ -743,7 +745,9 @@ class Doctor(TempRoot):
         self.assertIn('FlowHMR models', status)
         if not (ROOT / '.venv/bin/python').is_file():
             self.assertEqual(status['runtime flow'], 'fail')
-            self.assertEqual(status['runtime gui'], 'fail')
+            self.assertEqual(status['runtime shared'], 'fail')
+            # The CLI stays usable if a variant system has no GUI wheels.
+            self.assertEqual(status['runtime gui'], 'warn' if linux_runtime.linux_variant() else 'fail')
 
     def test_gpu_is_not_touched_unless_requested(self):
         with mock.patch.object(ubuntu_cli, 'capture', return_value=(0, 'GPU 0')) as run, mock.patch.object(ubuntu_cli.shutil, 'which', return_value='/usr/bin/nvidia-smi'):
@@ -757,6 +761,7 @@ class Doctor(TempRoot):
         replies = [(0, 'GPU 0'), (0, '@@DIAG@@' + json.dumps(dict(cuda=True, cuda_matmul_verified=True, torch='2', gpu='G'))),
                    (0, '@@DIAG@@' + json.dumps(dict(cuda=True, torch='2', gpu='G'))), (1, 'import failed')]
         with mock.patch.object(ubuntu_cli, 'ROOT', self.root), mock.patch.object(ubuntu_cli.shutil, 'which', return_value='nvidia-smi'), \
+                mock.patch.object(ubuntu_cli, 'linux_variant', return_value=None), \
                 mock.patch.object(ubuntu_cli, 'capture', side_effect=replies):
             rows = ubuntu_cli.check_gpu({}, True)
         self.assertEqual([row['status'] for row in rows], ['ok', 'ok', 'fail', 'fail'])
@@ -781,6 +786,356 @@ class Descendants(unittest.TestCase):
         self.assertTrue(children)
         self.assertEqual({child.pid for child in linux_runtime.terminate_descendants(parent.pid)}, {child.pid for child in children})
         psutil.wait_procs(children, timeout=5)
+
+
+class ArchitectureSelection(unittest.TestCase):
+    def test_machine_names_are_normalized(self):
+        for value, expected in (('x86_64', 'x86_64'), ('AMD64', 'x86_64'), ('aarch64', 'aarch64'), ('arm64', 'aarch64')):
+            self.assertEqual(linux_runtime.normalize_machine(value), expected)
+        self.assertEqual(linux_runtime.normalize_machine('riscv64'), 'riscv64')
+
+    def test_amd64_uses_the_unchanged_profile_objects(self):
+        self.assertIsNone(linux_runtime.linux_variant('x86_64'))
+        self.assertEqual(linux_runtime.variant_identity('x86_64'), {})
+        for key, spec in runtime_registry.PROFILES.items():
+            self.assertIs(linux_runtime.effective_profile(key, 'x86_64'), spec)
+
+    def test_aarch64_replaces_only_torch_and_torchvision(self):
+        for key, base in runtime_registry.PROFILES.items():
+            spec = linux_runtime.effective_profile(key, 'aarch64')
+            self.assertEqual((spec['packages']['torch'], spec['packages']['torchvision']), ('2.9.1+cu130', '0.24.1'))
+            self.assertEqual({k: v for k, v in spec['packages'].items() if k not in ('torch', 'torchvision')},
+                             {k: v for k, v in base['packages'].items() if k != 'torch'})
+            self.assertEqual((spec['python'], spec['dev']), (base['python'], base['dev']))
+        self.assertEqual(digest(json.dumps(runtime_registry.PROFILES, sort_keys=True).encode()), PROFILES_DIGEST)
+
+    def test_variant_identity_tracks_the_exact_wheels(self):
+        first = linux_runtime.variant_identity('aarch64')['linux_variant']
+        self.assertEqual((first['name'], first['machine']), ('linux-aarch64-cu130', 'aarch64'))
+        variant = json.loads(json.dumps(linux_runtime.linux_variant('aarch64')))
+        variant['cuda_packages']['torch']['sha256']['3.12'] = '0' * 64
+        with mock.patch.object(linux_runtime, 'linux_variant', return_value=variant):
+            self.assertNotEqual(linux_runtime.variant_identity('aarch64')['linux_variant']['pins'], first['pins'])
+
+    def test_unavailable_package_import_explains_itself(self):
+        finder = linux_runtime.PostImportPatches({}, {'rgbmocap_absent_package': 'No ARM wheel; use Static Camera.'})
+        with self.assertRaisesRegex(ModuleNotFoundError, 'No ARM wheel') as caught:
+            finder.find_spec('rgbmocap_absent_package')
+        self.assertEqual(caught.exception.name, 'rgbmocap_absent_package')
+        self.assertIsNone(finder.find_spec('json'))
+
+
+class ReceiptIdentity(TempRoot):
+    """Receipts name the runtime actually used; a machine change must not alias another's cache."""
+
+    def hamer_runtime(self, machine):
+        from mocap import flow_hamer
+        real = linux_runtime.effective_profile
+        with mock.patch.object(linux_runtime, 'effective_profile', lambda key: real(key, machine)), \
+                mock.patch('mocap.result_artifacts.file_stat', lambda path: [0, 0]):
+            return flow_hamer.source_identity()['runtime']
+
+    def test_hamer_identity_reflects_the_real_runtime(self):
+        amd64 = self.hamer_runtime('x86_64')
+        self.assertIs(amd64, runtime_registry.PROFILES['exmr'])
+        self.assertEqual(amd64['packages']['torch'], '2.8.0+cu128')
+        spark = self.hamer_runtime('aarch64')
+        self.assertEqual(spark['packages']['torch'], '2.9.1+cu130')
+        self.assertEqual(spark['linux_variant']['name'], 'linux-aarch64-cu130')
+
+    def fingerprint(self, machine):
+        from mocap import worker
+        project = self.root / 'project'
+        project.mkdir(exist_ok=True)
+        (project / 'project.json').write_text(json.dumps({'pipeline': {'model': 'flowhmr'}}))
+        with mock.patch.object(worker, 'variant_identity', lambda: linux_runtime.variant_identity(machine)), \
+                mock.patch('mocap.models.STAGE_REQUIREMENTS', {}):
+            return worker.fingerprint('track', project)
+
+    def test_stage_fingerprints_only_change_on_the_variant(self):
+        amd64 = self.fingerprint('x86_64')
+        self.assertEqual(amd64, self.fingerprint('x86_64'))
+        self.assertNotEqual(amd64, self.fingerprint('aarch64'))
+
+    def test_receipt_code_adds_nothing_where_profiles_apply(self):
+        for name in ('mocap/worker.py', 'mocap/exmr_backend.py', 'mocap/flow_backend.py'):
+            self.assertIn('variant_identity()', (ROOT / name).read_text(encoding='utf-8'), name)
+        from mocap import runtime_identity
+        with mock.patch.object(runtime_identity, 'os', SimpleNamespace(name='nt')):
+            self.assertEqual(runtime_identity.variant_identity(), {})
+            self.assertIs(runtime_identity.runtime_profile('exmr'), runtime_registry.PROFILES['exmr'])
+
+
+class AarchPlan(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.lock = json.loads((ROOT / 'installer/runtime-lock.json').read_bytes())
+        cls.variant = json.loads((ROOT / 'installer/linux-aarch64.json').read_text(encoding='utf-8'))
+
+    def plan(self, profile):
+        return setup_ubuntu.profile_plan(ROOT, self.lock, profile, 'aarch64')
+
+    @staticmethod
+    def names(pins):
+        return {setup_ubuntu.normalize(pin.split('==')[0]): pin.split('==')[1] for pin in pins}
+
+    def test_only_the_cuda_stack_differs_from_amd64(self):
+        for profile in setup_ubuntu.FOLDERS:
+            arm, amd = self.plan(profile), setup_ubuntu.profile_plan(ROOT, self.lock, profile, 'x86_64')
+            self.assertEqual((arm['python'], arm['folder'], arm['variant'], arm['cuda_index']),
+                             (amd['python'], amd['folder'], 'linux-aarch64-cu130', 'https://download.pytorch.org/whl/cu130'))
+            self.assertEqual(self.names(arm['cuda']), {'torch': '2.9.1+cu130', 'torchvision': '0.24.1'})
+            expected = self.names(amd['index'])
+            expected.pop('pycolmap', None)
+            for name in self.names(arm['gui']):
+                expected.pop(name)
+            self.assertEqual(self.names(arm['index']), expected, profile)
+            self.assertEqual(arm['wheels'], amd['wheels'])
+
+    def test_torchvision_cannot_come_from_a_look_alike_on_pypi(self):
+        plan = self.plan('flow')
+        self.assertFalse([pin for pin in plan['index'] if setup_ubuntu.normalize(pin.split('==')[0]) in ('torch', 'torchvision')])
+        self.assertEqual(plan['cuda_hashes']['torchvision'], self.variant['cuda_packages']['torchvision']['sha256']['3.10'])
+        self.assertEqual(self.plan('exmr')['cuda_hashes']['torch'], self.variant['cuda_packages']['torch']['sha256']['3.12'])
+
+    def test_hashes_exist_for_each_python_and_are_well_formed(self):
+        minors = {spec['python'].rsplit('.', 1)[0] for spec in runtime_registry.PROFILES.values()}
+        for row in self.variant['cuda_packages'].values():
+            self.assertEqual(set(row['sha256']), minors)
+            for value in row['sha256'].values():
+                self.assertRegex(value, r'^[0-9a-f]{64}$')
+
+    def test_unavailable_package_is_reported_only_where_it_is_pinned(self):
+        self.assertEqual(list(self.plan('exmr')['unavailable']), ['pycolmap'])
+        self.assertEqual(self.plan('flow')['unavailable'], {})
+        self.assertNotIn('pycolmap', self.names(self.plan('exmr')['index']))
+
+    def test_gui_is_separate_so_cli_survives_without_it(self):
+        self.assertEqual(self.names(self.plan('shared')['gui']), {'pyside6': '6.8.3', 'pyside6-addons': '6.8.3', 'pyside6-essentials': '6.8.3', 'shiboken6': '6.8.3'})
+        self.assertEqual(self.plan('flow')['gui'], [])
+        amd = setup_ubuntu.profile_plan(ROOT, self.lock, 'shared', 'x86_64')
+        self.assertNotIn('gui', amd)
+        self.assertIn('pyside6', self.names(amd['index']))
+
+    def test_machine_markers_are_honored(self):
+        metadata = '\n'.join(('Requires-Dist: nvidia-a==1; platform_system == "Linux" and platform_machine == "x86_64"',
+                              'Requires-Dist: nvidia-b==2; platform_system == "Linux" and platform_machine == "aarch64"',
+                              'Requires-Dist: nvidia-c==3; platform_system == "Linux" and platform_machine != "x86_64"',
+                              'Requires-Dist: nvidia-d==4; platform_system == "Linux"'))
+        self.assertEqual(setup_ubuntu.linux_dependencies(metadata, set(), 'aarch64'), ['nvidia-b==2', 'nvidia-c==3', 'nvidia-d==4'])
+        self.assertEqual(setup_ubuntu.linux_dependencies(metadata, set(), 'x86_64'), ['nvidia-a==1', 'nvidia-d==4'])
+
+    def test_other_machines_are_refused_and_cross_install_is_refused(self):
+        with mock.patch('builtins.print'), self.assertRaisesRegex(SystemExit, 'No pinned wheels'):
+            setup_ubuntu.main(['--plan', '--machine', 'riscv64'])
+        other = 'x86_64' if linux_runtime.normalize_machine() == 'aarch64' else 'aarch64'
+        with self.assertRaisesRegex(SystemExit, 'only be used with --plan'):
+            setup_ubuntu.main(['--machine', other])
+
+
+class AarchInstall(TempRoot):
+    def test_hash_pinned_cuda_install_and_honest_receipt(self):
+        plan = dict(profile='shared', folder='.venv', python='3.10.22', machine='aarch64', variant='linux-aarch64-cu130',
+                    cuda_index='https://download.pytorch.org/whl/cu130', cuda=['torch==2.9.1+cu130', 'torchvision==0.24.1'],
+                    cuda_hashes={'torch': 'a' * 64, 'torchvision': 'b' * 64}, index=['numpy==1.23.5'], wheels=[], gui=['pyside6==6.8.3'],
+                    unavailable={'pycolmap': 'No wheel.'})
+        site = self.root / '.venv/lib/python3.10/site-packages'
+        (site / 'torch-2.9.1+cu130.dist-info').mkdir(parents=True)
+        (site / 'torch-2.9.1+cu130.dist-info/METADATA').write_text('Requires-Dist: triton==3.5.1; platform_system == "Linux"\n')
+        executable(self.root / '.venv/bin/python')
+        calls = []
+
+        def fake_run(command, check=True):
+            calls.append(list(map(str, command)))
+            # The GUI wheel step fails here: processing must still be prepared.
+            return SimpleNamespace(returncode=1 if 'pyside6==6.8.3' in calls[-1] else 0)
+        done = SimpleNamespace(returncode=0, stdout='3.10.22\n')
+        with mock.patch.object(setup_ubuntu, 'ROOT', self.root), mock.patch.object(setup_ubuntu, 'run', side_effect=fake_run), \
+                mock.patch.object(setup_ubuntu.subprocess, 'run', return_value=done), mock.patch('builtins.print') as output:
+            setup_ubuntu.install_profile('uv', plan, self.root / 'wheels', self.root / 'work', False)
+        first = next(call for call in calls if call[:3] == ['uv', 'pip', 'install'])
+        self.assertIn('--require-hashes', first)
+        self.assertEqual(first[first.index('--index-url') + 1], plan['cuda_index'])
+        requirements = Path(first[first.index('-r') + 1]).read_text()
+        self.assertIn(f"torchvision==0.24.1 --hash=sha256:{'b' * 64}", requirements)
+        self.assertEqual([call[-1] for call in calls if '--runtime-check' in call], ['shared'])
+        receipt = json.loads((self.root / '.venv' / linux_runtime.RECEIPT).read_text())
+        self.assertEqual((receipt['machine'], receipt['variant'], receipt['gui_available'], receipt['cuda_verified'], receipt['linux_extras']),
+                         ('aarch64', 'linux-aarch64-cu130', False, False, ['triton==3.5.1']))
+        text = ' '.join(' '.join(map(str, call.args)) for call in output.call_args_list)
+        self.assertIn('CUDA has not been run', text)
+        self.assertIn('NOT INSTALLED pycolmap', text)
+
+
+class NativeBuildFlags(TempRoot):
+    @classmethod
+    def setUpClass(cls):
+        cls.cmake = (ROOT / 'third_party/KimodoMotionCorrection/CMakeLists.txt').read_text(encoding='utf-8')
+
+    def branch(self):
+        start = self.cmake.index('if(MSVC)')
+        return self.cmake[start:self.cmake.index('# Python bindings')]
+
+    def test_x86_and_msvc_flags_are_preserved_exactly(self):
+        branch = self.branch()
+        self.assertIn('target_compile_options(motion_correction_cpp_base PRIVATE /W4 /arch:AVX)', branch)
+        self.assertIn('else()\n    # GCC/Clang flags (also applies to MinGW on Windows)\n    # Enable SSE4.1 and AVX instructions for SIMD operations\n'
+                      '    target_compile_options(motion_correction_cpp_base PRIVATE -Wall -Wextra -msse4.1 -mavx)\nendif()', branch)
+
+    def test_aarch64_branch_uses_no_x86_flags_and_keeps_x86_semantics(self):
+        branch = self.branch()
+        arm = branch[branch.index('elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")'):branch.index('# GCC/Clang flags')]
+        self.assertNotIn('-msse', arm)
+        self.assertNotIn('-mavx', arm)
+        self.assertIn('-fsigned-char -ffp-contract=off', arm)
+        self.assertIn('SSE2NEON_PRECISE_MINMAX=1', arm)
+        self.assertNotRegex(arm, r'SSE2NEON_PRECISE_SQRT=|SSE2NEON_PRECISE_DIV=')
+        self.assertRegex(arm, r'sse2neon/[0-9a-f]{40}/sse2neon\.h')
+        self.assertRegex(arm, r'URL_HASH SHA256=[0-9a-f]{64}')
+
+    def test_numerical_source_uses_the_adapter_not_edits(self):
+        self.assertIn('#include <immintrin.h>', (ROOT / 'third_party/KimodoMotionCorrection/src/cpp/Math/SIMD.h').read_text(encoding='utf-8'))
+        done = subprocess.run(['git', 'status', '--porcelain', '--', 'third_party/KimodoMotionCorrection/src', 'third_party/KimodoMotionCorrection/python'],
+                              cwd=ROOT, capture_output=True, text=True)
+        if done.returncode == 0:
+            self.assertEqual(done.stdout, '')
+
+    @unittest.skipUnless(linux_runtime.normalize_machine() == 'aarch64' and shutil.which('g++'), 'needs an aarch64 compiler')
+    def test_adapter_matches_x86_results_in_a_real_compile(self):
+        folder = os.environ.get('RGB_MOCAP_SSE2NEON_DIR') or ROOT / 'build/motion-correction/_deps/sse2neon-src'
+        if not (Path(folder) / 'sse2neon.h').is_file():
+            self.skipTest('The pinned sse2neon header has not been fetched by a native build.')
+        source = self.root / 'semantics.cpp'
+        source.write_text(SEMANTICS_SOURCE)
+        program = self.root / 'semantics'
+        defines = re.findall(r'SSE2NEON_PRECISE_\w+=\d', self.branch())
+        subprocess.run(['g++', '-std=c++17', '-O3', '-fsigned-char', '-ffp-contract=off', *[f'-D{item}' for item in defines], '-isystem', str(folder),
+                        '-isystem', str(ROOT / 'third_party/KimodoMotionCorrection/compat/aarch64'), str(source), '-o', str(program)], check=True, capture_output=True)
+        done = subprocess.run([str(program)], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stdout)
+
+
+SEMANTICS_SOURCE = r"""
+#include <immintrin.h>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <limits>
+static int failures=0;
+static uint32_t bits(float v){uint32_t u;std::memcpy(&u,&v,4);return u;}
+static void lanes(const char*name,__m128 v,float a,float b,float c,float d){float o[4];_mm_storeu_ps(o,v);float e[4]={a,b,c,d};for(int i=0;i<4;i++)if(!((std::isnan(e[i])&&std::isnan(o[i]))||bits(o[i])==bits(e[i]))){failures++;printf("FAIL %s\\n",name);return;}}
+int main(){const float nan=std::numeric_limits<float>::quiet_NaN();__m128 a=_mm_setr_ps(1,2,3,4);uint32_t c[4];
+ lanes("permutevar",_mm_permutevar_ps(a,_mm_setr_epi32(3,2,1,0)),4,3,2,1);
+ lanes("permutevar high bits",_mm_permutevar_ps(a,_mm_setr_epi32(4,5,0x7ffffff2,-1)),1,2,3,4);
+ lanes("min NaN",_mm_min_ps(_mm_setr_ps(nan,1,nan,5),_mm_setr_ps(1,nan,nan,2)),1,nan,nan,2);
+ lanes("max NaN",_mm_max_ps(_mm_setr_ps(nan,1,nan,5),_mm_setr_ps(1,nan,nan,2)),1,nan,nan,5);
+ _mm_storeu_si128((__m128i*)c,_mm_cvttps_epi32(_mm_setr_ps(3e9f,-3e9f,nan,-1.9f)));
+ if(c[0]!=0x80000000||c[1]!=0x80000000||c[2]!=0x80000000||c[3]!=0xffffffff){failures++;printf("FAIL cvttps\\n");}
+ uint32_t state=2463534242u;auto next=[&]{state^=state<<13;state^=state>>17;state^=state<<5;return 1e-3f+(float)(state%2000000)/1000.f;};
+ for(int i=0;i<50000;i++){volatile float x=next(),y=next();float o[4];
+  _mm_storeu_ps(o,_mm_div_ps(_mm_set1_ps(x),_mm_set1_ps(y)));volatile float d=x/y;if(bits(o[0])!=bits(d)){failures++;printf("FAIL div\\n");break;}
+  _mm_storeu_ps(o,_mm_sqrt_ps(_mm_set1_ps(x)));if(bits(o[0])!=bits(std::sqrt((float)x))){failures++;printf("FAIL sqrt\\n");break;}
+  _mm_store_ss(o,_mm_sqrt_ss(_mm_set_ss(x)));if(bits(o[0])!=bits(std::sqrt((float)x))){failures++;printf("FAIL sqrt_ss\\n");break;}}
+ volatile float e=1.f+1.f/4096;volatile float k=-(1.f+1.f/2048);float r[4];
+ _mm_storeu_ps(r,_mm_add_ps(_mm_mul_ps(_mm_set1_ps(e),_mm_set1_ps(e)),_mm_set1_ps(k)));if(r[0]!=0.f){failures++;printf("FAIL fused\\n");}
+ if(!((char)-1<0)){failures++;printf("FAIL char\\n");}
+ return failures!=0;}
+"""
+
+
+class CorrectionCrosscheck(TempRoot):
+    def run_tool(self, *arguments):
+        return subprocess.run([sys.executable, '-I', '-B', str(ROOT / 'tools/correction_crosscheck.py'), *map(str, arguments)], capture_output=True, text=True)
+
+    def report(self, name, roots, rotations, machine='a'):
+        import base64
+        from array import array
+        path = self.root / name
+        path.write_text(json.dumps(dict(machine=machine, metrics=dict(m=1.), roots=base64.b64encode(array('f', roots).tobytes()).decode(),
+                                        rotations=base64.b64encode(array('f', rotations).tobytes()).decode())))
+        return path
+
+    def test_identical_reports_have_exactly_zero_difference(self):
+        first = self.report('a.json', [1, 2, 3], [.5, .5, .5, .5])
+        done = self.run_tool('compare', first, first)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        value = json.loads(done.stdout[:done.stdout.rindex('}') + 1])
+        self.assertEqual((value['identical'], value['max_root_difference_m'], value['max_rotation_difference_deg']), (True, 0.0, 0.0))
+
+    def test_real_differences_are_measured_and_fail(self):
+        first = self.report('a.json', [1, 2, 3], [1, 0, 0, 0])
+        # A 1 degree rotation about x, and a 1 mm translation.
+        half = math.radians(.5)
+        second = self.report('b.json', [1.001, 2, 3], [math.cos(half), math.sin(half), 0, 0], 'b')
+        done = self.run_tool('compare', first, second)
+        self.assertEqual(done.returncode, 1)
+        value = json.loads(done.stdout[:done.stdout.rindex('}') + 1])
+        self.assertAlmostEqual(value['max_root_difference_m'], .001, places=5)
+        self.assertAlmostEqual(value['max_rotation_difference_deg'], 1.0, places=3)
+        self.assertIn('DIFFERENT BEYOND TOLERANCE', done.stdout)
+        self.assertEqual(self.run_tool('compare', first, second, '--max-root-mm', 2, '--max-rotation-deg', 2).returncode, 0)
+
+    def test_opposite_quaternion_signs_are_the_same_rotation(self):
+        first = self.report('a.json', [0], [.5, .5, .5, .5])
+        second = self.report('b.json', [0], [-.5, -.5, -.5, -.5])
+        value = json.loads(self.run_tool('compare', first, second).stdout.rsplit('\n', 2)[0])
+        self.assertEqual(value['max_rotation_difference_deg'], 0.0)
+
+    def test_real_module_is_deterministic_when_available(self):
+        try:
+            import numpy  # noqa: F401
+        except ImportError:
+            self.skipTest('Needs NumPy from a pinned environment.')
+        if linux_runtime.correction_path(ROOT) is None:
+            self.skipTest('No correction module is built for this interpreter.')
+        outputs = [self.root / 'first.json', self.root / 'second.json']
+        for output in outputs:
+            done = self.run_tool('run', '--output', output)
+            self.assertEqual(done.returncode, 0, done.stderr)
+        reports = [json.loads(path.read_text()) for path in outputs]
+        self.assertEqual(reports[0]['rotations'], reports[1]['rotations'])
+        self.assertGreater(reports[0]['changed_rotation_values'], 0)
+
+
+class DoctorArchitecture(TempRoot):
+    def test_architecture_row_names_the_variant(self):
+        with mock.patch.object(ubuntu_cli, 'normalize_machine', return_value='aarch64'), \
+                mock.patch.object(ubuntu_cli, 'linux_variant', return_value=linux_runtime.linux_variant('aarch64')):
+            rows = ubuntu_cli.check_architecture()
+        self.assertIn('Torch 2.9.1+cu130', rows[0]['detail'])
+        self.assertEqual((rows[1]['name'], rows[1]['status']), ('not available: pycolmap', 'warn'))
+        with mock.patch.object(ubuntu_cli, 'normalize_machine', return_value='riscv64'), mock.patch.object(ubuntu_cli, 'linux_variant', return_value=None):
+            self.assertEqual(ubuntu_cli.check_architecture()[0]['status'], 'fail')
+
+    def test_cpu_torchvision_is_a_failure_on_the_variant(self):
+        library = self.root / '.venv/lib/python3.10/site-packages/torchvision/_C.so'
+        library.parent.mkdir(parents=True)
+        library.write_bytes(b'libtorch_cpu.so only')
+        with mock.patch.object(ubuntu_cli, 'ROOT', self.root), mock.patch.object(ubuntu_cli, 'linux_variant', return_value=linux_runtime.linux_variant('aarch64')), \
+                mock.patch.object(ubuntu_cli, 'effective_profile', lambda key: dict(dev='.venv')):
+            rows = ubuntu_cli.check_torchvision_builds()
+            self.assertEqual([row['status'] for row in rows], ['fail'])
+            library.write_bytes(b'needs libcudart.so.13')
+            self.assertEqual([row['status'] for row in ubuntu_cli.check_torchvision_builds()], ['ok'])
+
+    def test_variant_real_gpu_check_requires_a_cuda_nms(self):
+        for key in ('shared', 'flow', 'exmr'):
+            executable(self.root / runtime_registry.PROFILES[key]['dev'] / 'bin/python')
+        good = dict(cuda=True, cuda_matmul_verified=True, torchvision_nms_verified=True, torch='2.9.1+cu130', gpu='GB10', compute_capability=[12, 1])
+        without = {key: value for key, value in good.items() if key != 'torchvision_nms_verified'}
+        replies = [(0, 'GPU 0'), (0, '@@DIAG@@' + json.dumps(good)), (0, '@@DIAG@@' + json.dumps(without)), (0, '@@DIAG@@' + json.dumps({**without, 'torchvision_nms_error': 'no CUDA kernel'}))]
+        with mock.patch.object(ubuntu_cli, 'ROOT', self.root), mock.patch.object(ubuntu_cli.shutil, 'which', return_value='nvidia-smi'), \
+                mock.patch.object(ubuntu_cli, 'linux_variant', return_value=linux_runtime.linux_variant('aarch64')), mock.patch.object(ubuntu_cli, 'capture', side_effect=replies):
+            rows = ubuntu_cli.check_gpu({}, True)
+        self.assertEqual([row['status'] for row in rows], ['ok', 'ok', 'fail', 'fail'])
+        self.assertIn('sm_121', rows[1]['detail'])
+        self.assertIn('no CUDA kernel', rows[3]['detail'])
+
+    def test_missing_gui_is_only_a_warning_on_the_variant(self):
+        with mock.patch.object(ubuntu_cli, 'ROOT', self.root), mock.patch.object(ubuntu_cli, 'linux_variant', return_value=linux_runtime.linux_variant('aarch64')):
+            rows = {row['name']: row['status'] for row in ubuntu_cli.check_profiles({})}
+        self.assertEqual((rows['runtime gui'], rows['runtime flow']), ('warn', 'fail'))
 
 
 class Documentation(unittest.TestCase):

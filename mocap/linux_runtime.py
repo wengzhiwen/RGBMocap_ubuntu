@@ -8,11 +8,14 @@ receipts embed them.
 """
 from __future__ import annotations
 
+import functools
+import hashlib
 import importlib.abc
 import importlib.machinery
 import importlib.util
 import json
 import os
+import platform
 import sys
 from pathlib import Path
 
@@ -21,11 +24,52 @@ RECEIPT = 'rgbmocap-linux.json'
 CORRECTION_FOLDER = 'third_party/KimodoMotionCorrection/bin'
 # Checked in addition to PROFILES without changing those receipt-visible dictionaries.
 EXTRA_PACKAGES = {'gui': {'PySide6': '6.8.3'}}
+# Machines whose official Torch wheels need pins other than PROFILES. Anything absent here
+# uses PROFILES unchanged, so amd64 receipts stay identical to the Windows-derived ones.
+VARIANT_FILES = {'aarch64': 'installer/linux-aarch64.json'}
+SUPPORTED_MACHINES = ('x86_64', 'aarch64')
 
 
 def profiles():
     from .runtime_registry import PROFILES
     return PROFILES
+
+
+def normalize_machine(machine=None):
+    value = (machine or platform.machine()).lower()
+    return {'amd64': 'x86_64', 'x64': 'x86_64', 'arm64': 'aarch64'}.get(value, value)
+
+
+@functools.lru_cache(maxsize=4)
+def _load_variant(machine):
+    name = VARIANT_FILES.get(machine)
+    if name is None:
+        return None
+    return json.loads((Path(__file__).resolve().parents[1] / name).read_text(encoding='utf-8'))
+
+
+def linux_variant(machine=None):
+    """The separately pinned variant for this machine, or None to use PROFILES."""
+    return _load_variant(normalize_machine(machine))
+
+
+def variant_identity(machine=None):
+    """Receipt keys naming the variant and its exact wheels; empty when PROFILES apply."""
+    variant = linux_variant(machine)
+    if variant is None:
+        return {}
+    pins = json.dumps(variant['cuda_packages'], sort_keys=True).encode()
+    return {'linux_variant': dict(name=variant['name'], machine=variant['machine'], pins=hashlib.sha256(pins).hexdigest())}
+
+
+def effective_profile(key, machine=None):
+    """PROFILES[key] itself where it applies; otherwise a copy with the variant's pins."""
+    base = profiles()[key]
+    variant = linux_variant(machine)
+    if variant is None:
+        return base
+    packages = {**base['packages'], **{name: row['version'] for name, row in variant['cuda_packages'].items()}}
+    return {**base, 'packages': packages, **variant_identity(machine)}
 
 
 def venv_folder(root, key):
@@ -70,7 +114,7 @@ def activate(root, key):
     """Validate effective imports before any model, CUDA or GUI module loads."""
     import importlib.metadata as metadata
     root = Path(root).resolve()
-    spec = profiles()[key]
+    spec = effective_profile(key)
     venv = root / spec['dev']
     if sys.prefix == sys.base_prefix or Path(sys.prefix).resolve() != venv.resolve():
         raise RuntimeError(f'Wrong interpreter for {key}: {sys.prefix} is not {venv}. {SETUP_HINT}')
@@ -99,7 +143,8 @@ def activate(root, key):
         imports[name] = str(origin)
     install_import_hooks()
     return dict(profile=key, python=sys.executable, packages=packages, imports=imports,
-                platform=sys.platform, environment=str(venv))
+                platform=sys.platform, environment=str(venv), machine=normalize_machine(),
+                variant=(linux_variant() or {}).get('name'))
 
 
 def runtime_environment(root, base=None):
@@ -169,10 +214,14 @@ class PostImportPatches(importlib.abc.MetaPathFinder):
     instead would load NumPy before workers configure their thread limits.
     """
 
-    def __init__(self, patches):
+    def __init__(self, patches, unavailable=None):
         self.patches = patches
+        self.unavailable = unavailable or {}
 
     def find_spec(self, fullname, path=None, target=None):
+        # Replace a bare "No module named" with the reason this machine lacks the package.
+        if fullname in self.unavailable and importlib.machinery.PathFinder.find_spec(fullname, path, target) is None:
+            raise ModuleNotFoundError(self.unavailable[fullname], name=fullname)
         # HandFlow's hashed engine still selects PyOpenGL's Windows platform; PyOpenGL
         # reads the value on import. A user-chosen platform is left unchanged.
         if fullname == 'OpenGL' and os.environ.get('PYOPENGL_PLATFORM') == 'win32':
@@ -196,7 +245,8 @@ def install_import_hooks():
     name = __package__ + '.correction'
     if name in sys.modules:
         _patch_correction(sys.modules[name])
-    sys.meta_path.insert(0, PostImportPatches({name: _patch_correction}))
+    unavailable = {package: row['reason'] for package, row in (linux_variant() or {}).get('unavailable', {}).items()}
+    sys.meta_path.insert(0, PostImportPatches({name: _patch_correction}, unavailable))
 
 
 def terminate_descendants(pid):

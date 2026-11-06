@@ -3,6 +3,7 @@ from pathlib import Path
 import json,os,subprocess,uuid,zipfile
 from .paths import ROOT,UPSTREAM
 from .process_memory import peak_rss_bytes
+from .runtime_identity import runtime_profile
 
 MODEL_KEYS=('hand_hamer','hand_mean','mano_right')
 
@@ -24,13 +25,12 @@ def source_identity():
     from .resource_cache import code_hash
     from .models import BY_KEY
     from .result_artifacts import file_stat
-    from .runtime_registry import PROFILES
     files=[ROOT/'mocap/flow_hamer.py',ROOT/'mocap/flow_hamer_entry.py',
            ROOT/'mocap/exmr_backend.py',UPSTREAM/'ExMR/configs/hamer_model_config.yaml',
            UPSTREAM/'ExMR/exmr/preprocessing/hand_features.py',UPSTREAM/'ExMR/exmr/geometry/smoothing.py']
     files+=sorted((UPSTREAM/'ExMR/third_party/hamer/hamer').rglob('*.py'))
     return dict(version=1,code={str(p.relative_to(ROOT)):code_hash(p) for p in files},
-                models={k:file_stat(BY_KEY[k].path) for k in MODEL_KEYS},runtime=PROFILES['exmr'],
+                models={k:file_stat(BY_KEY[k].path) for k in MODEL_KEYS},runtime=runtime_profile('exmr'),
                 hands='every frame, ExMR crops, FP16 network, Gaussian rotation sigma=1 frame')
 
 
