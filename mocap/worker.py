@@ -11,6 +11,8 @@ from pathlib import Path
 from .paths import ROOT
 from .storage import atomic_json, sha256
 from .resource_cache import code_hash
+from .process_memory import peak_rss_bytes
+from .runtime_identity import variant_identity
 from .motion_tools import MOTION_TOOLS, resolve_motion_result, RESULTS, result_sources, result_options, result_is_current, base_result, body_result, has_handflow, require_supported_project, UnsupportedMotionTool
 
 PREFIX = "@@MOCAP@@"
@@ -74,6 +76,7 @@ def fingerprint(stage, project, result="auto", _worker_hash=None, _legacy_routin
         sources.append(Path(__file__).with_name('correction_settings.py'))
         sources.append(Path(__file__).with_name('foot_contacts.py'))
         sources.extend((ROOT/'third_party/KimodoMotionCorrection/bin').glob('*.pyd'))
+        sources.extend(sorted((ROOT/'third_party/KimodoMotionCorrection/bin').glob('*.so')))
     if stage in ('correct','export'):
         sources.append(Path(__file__).with_name('result_artifacts.py'))
     if stage == "pva":
@@ -124,6 +127,7 @@ def fingerprint(stage, project, result="auto", _worker_hash=None, _legacy_routin
     for key in STAGE_REQUIREMENTS.get(stage, ()):
         path = BY_KEY[key].path
         identity["models"].append((key, path.stat().st_size, path.stat().st_mtime_ns))
+    identity.update(variant_identity())
     return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
 
 
@@ -253,7 +257,7 @@ def main() -> int:
             atomic_json(export_path,metadata)
             import psutil
             emit('complete',stage='rig',output=str(result),cached=False,elapsed=time.monotonic()-started,
-                peak_ram_gib=round(psutil.Process().memory_info().peak_wset/1024**3,3))
+                peak_ram_gib=round(peak_rss_bytes()/1024**3,3))
             return 0
         if args.stage == "mesh":
             from .mesh_data import prepare_mesh_preview
@@ -287,7 +291,7 @@ def main() -> int:
                 output=prepare_person(project,args.person_id,args.first_frame,args.end_frame or manifest['frames'],args.result,
                     {'auto_floor':args.floor is None,'floor':float(args.floor or 0),'preset':args.correction_preset,'pelvis_offset':args.pelvis_offset,'mode':args.correction_mode,'foot_lock':bool(args.foot_lock),'hand_lock':bool(args.hand_lock)},emit)
             emit('complete',stage=args.stage,output=str(output),elapsed=time.monotonic()-started,cached=False,
-                peak_ram_gib=round(psutil.Process().memory_info().peak_wset/1024**3,3),
+                peak_ram_gib=round(peak_rss_bytes()/1024**3,3),
                 peak_cuda_allocated_gib=round(torch.cuda.max_memory_allocated()/1024**3,3) if torch.cuda.is_initialized() else 0)
             return 0
         outputs = {"track": "tracking.npz", "pva": "pva_results.pt", "features": "features.pt", "gvhmr": "hmr4d_results.pt", "refine": "opt_results.pt", "export": "motion.bvh"}
@@ -381,7 +385,7 @@ def main() -> int:
         elapsed = time.monotonic() - started
         import torch
         import psutil
-        memory = {"peak_ram_gib": round(psutil.Process().memory_info().peak_wset / 1024**3, 3)}
+        memory = {"peak_ram_gib": round(peak_rss_bytes() / 1024**3, 3)}
         if torch.cuda.is_initialized():
             memory.update(peak_cuda_allocated_gib=round(torch.cuda.max_memory_allocated() / 1024**3, 3),
                           peak_cuda_reserved_gib=round(torch.cuda.max_memory_reserved() / 1024**3, 3))

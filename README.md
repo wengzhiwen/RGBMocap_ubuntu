@@ -27,6 +27,8 @@ https://github.com/user-attachments/assets/4c0b290b-4a65-4287-8d22-c63c96b3d080
 
 ## Install and run
 
+On Ubuntu, follow [docs/UBUNTU.md](docs/UBUNTU.md) instead of the Windows steps below.
+
 1. Install [Git for Windows](https://git-scm.com/download/win). Open **Command Prompt**
    in a writable folder where you want to install RGB MoCap, then clone the repository:
 

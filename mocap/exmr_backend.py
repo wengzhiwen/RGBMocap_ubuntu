@@ -9,6 +9,7 @@ import numpy as np
 from .paths import ROOT, HOME, UPSTREAM
 from .storage import atomic_json, sha256
 from .resource_cache import code_hash
+from .runtime_identity import variant_identity
 from .model_session import set_memory_budget
 from .compute_policy import gpu_memory_fraction
 from .result_artifacts import file_stat
@@ -47,7 +48,7 @@ def activate():
         if not (root/name).is_dir():raise RuntimeError('ExMR runtime is missing. Repair the application installation.')
     for path in (root,root/'third_party/sapiens2',root/'third_party/hamer'):
         if str(path) not in sys.path:sys.path.insert(0,str(path))
-    os.environ.update(PYOPENGL_PLATFORM='win32',WANDB_MODE='disabled',PYTHONNOUSERSITE='1')
+    os.environ.update(PYOPENGL_PLATFORM='win32' if os.name=='nt' else os.environ.get('PYOPENGL_PLATFORM','egl'),WANDB_MODE='disabled',PYTHONNOUSERSITE='1')
     weights=HOME/'cache/exmr/assets';weights.mkdir(parents=True,exist_ok=True)
     for key,name in LINKS.items():
         source=BY_KEY[key].path
@@ -149,7 +150,7 @@ def identity(project,stage):
         upstream_api=sha256(UPSTREAM/'ExMR/exmr/pipeline.py'),
         motion_solver={name:sha256(UPSTREAM/'ExMR/exmr'/name) for name in
             ('model/exmr.py','model/global_traj.py','model/ik.py','geometry/camera.py')} if stage=='exmr' else {},
-        code=code_hash(Path(__file__)),upstream=sha256(UPSTREAM/'ExMR/RGB_MOCAP_PROVENANCE.json'))
+        code=code_hash(Path(__file__)),upstream=sha256(UPSTREAM/'ExMR/RGB_MOCAP_PROVENANCE.json'),**variant_identity())
 
 
 def frame_dir(project,n):
@@ -162,7 +163,7 @@ def frame_dir(project,n):
         if json.loads((directory/'receipt.json').read_text(encoding='utf-8'))==identity and len(list(directory.glob('*.jpg')))==n:return directory
     except (OSError,ValueError):pass
     for path in directory.glob('*.jpg'):path.unlink()
-    subprocess.run([executable('ffmpeg'),'-v','error','-i',str(project/'input.mp4'),'-vsync','0','-q:v','2','-start_number','0','-threads','2','-y',str(directory/'%06d.jpg')],check=True,creationflags=0x08000000)
+    subprocess.run([executable('ffmpeg'),'-v','error','-i',str(project/'input.mp4'),'-vsync','0','-q:v','2','-start_number','0','-threads','2','-y',str(directory/'%06d.jpg')],check=True,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
     if len(list(directory.glob('*.jpg')))!=n:raise ValueError('ExMR frame count differs from project')
     atomic_json(directory/'receipt.json',identity)
     return directory

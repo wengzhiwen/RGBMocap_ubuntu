@@ -12,7 +12,7 @@ class ConsoleLog(QTextEdit):
         super().__init__(parent)
         self._messages = None
         self._last_status = None
-        stream = sys.stdout if os.environ.get("RGB_MOCAP_MANAGED") == "1" else None
+        stream = sys.stdout if os.environ.get("RGB_MOCAP_MANAGED") == "1" or os.name != "nt" else None
         if stream is not None:
             self._messages = queue.Queue(maxsize=256)
             threading.Thread(target=self._write_messages, args=(stream,), daemon=True,

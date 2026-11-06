@@ -1,0 +1,135 @@
+{
+  "schema": 1,
+  "scope": "second-gb10-fresh-deployment",
+  "date": "2026-11-07",
+  "source_revision": "a176d61",
+  "fresh_published_clone": true,
+  "fresh_pinned_environments": true,
+  "copied_environments": false,
+  "native_correction_built_on_target": true,
+  "source_patches_required": false,
+  "platform": {
+    "os": "Ubuntu 24.04.5 LTS",
+    "machine": "aarch64",
+    "gpu": "NVIDIA GB10",
+    "driver": "580.178.04",
+    "torch": "2.9.1+cu130",
+    "cuda": "13.0",
+    "python": {
+      "shared": "3.10.22",
+      "flow": "3.10.22",
+      "exmr": "3.12.10"
+    }
+  },
+  "doctor": {
+    "ok": 24,
+    "warn": 5,
+    "fail": 0
+  },
+  "cpu_tests": {
+    "run": 183,
+    "passed": 182,
+    "skipped": 1,
+    "failed": 0
+  },
+  "transfer": {
+    "verified_files": 119,
+    "video_files": 89,
+    "unique_video_contents": 29,
+    "model_files": 30,
+    "sha256_all_match": true
+  },
+  "cases": [
+    {
+      "case": "public-static-60",
+      "camera": "static",
+      "frames": 60,
+      "finite": true,
+      "hamer_valid": [
+        60,
+        60
+      ],
+      "hamer_body_preserved": true,
+      "correction_fingers_preserved": true,
+      "selected_results": true,
+      "native_correction": true,
+      "source_fbx": true,
+      "cached_rerun": true,
+      "missing_hand_fallback_unchanged": true
+    },
+    {
+      "case": "public-moving-690",
+      "camera": "moving",
+      "frames": 690,
+      "finite": true,
+      "hamer_valid": [
+        690,
+        690
+      ],
+      "hamer_body_preserved": true,
+      "correction_fingers_preserved": true,
+      "selected_results": true,
+      "native_correction": true,
+      "source_fbx": true,
+      "cached_rerun": null,
+      "missing_hand_fallback_unchanged": true
+    },
+    {
+      "case": "private-unicode-451",
+      "camera": "moving",
+      "frames": 451,
+      "finite": true,
+      "hamer_valid": [
+        451,
+        409
+      ],
+      "hamer_body_preserved": true,
+      "correction_fingers_preserved": true,
+      "selected_results": true,
+      "native_correction": true,
+      "source_fbx": true,
+      "cached_rerun": null,
+      "missing_hand_fallback_unchanged": true
+    }
+  ],
+  "gui": {
+    "native_desktop_startup": true,
+    "project_open": true,
+    "static_video_and_mesh_render": true,
+    "interactive_playback": null,
+    "desktop_locked": true
+  },
+  "fbx_import": {
+    "host": "amd64-validation-host",
+    "blender": "4.5.4 LTS",
+    "cases": [
+      {
+        "frames": 451,
+        "bones_with_terminals": 65,
+        "fps": 30,
+        "action_range": [
+          1.0,
+          451.0
+        ]
+      },
+      {
+        "frames": 690,
+        "bones_with_terminals": 65,
+        "fps": 30,
+        "action_range": [
+          1.0,
+          690.0
+        ]
+      }
+    ]
+  },
+  "limitations": [
+    "Not a clean OS installation; existing GPU driver retained.",
+    "ExMR moving camera unavailable: no pinned pycolmap wheel on aarch64.",
+    "Optional hand/HTD environments and other model workflows not validated.",
+    "No Blender installed on target; retargeting and Blender bundles not validated there.",
+    "SSH doctor has no DISPLAY; native desktop startup was checked separately.",
+    "Torch emits an sm_121 compatibility warning; actual CUDA matmul, NMS and end-to-end inference passed.",
+    "Functional acceptance only; not another repeated performance benchmark."
+  ]
+}

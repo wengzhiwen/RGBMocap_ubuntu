@@ -2,6 +2,8 @@
 from pathlib import Path
 import json,os,subprocess,uuid,zipfile
 from .paths import ROOT,UPSTREAM
+from .process_memory import peak_rss_bytes
+from .runtime_identity import runtime_profile
 
 MODEL_KEYS=('hand_hamer','hand_mean','mano_right')
 
@@ -23,13 +25,12 @@ def source_identity():
     from .resource_cache import code_hash
     from .models import BY_KEY
     from .result_artifacts import file_stat
-    from .runtime_registry import PROFILES
     files=[ROOT/'mocap/flow_hamer.py',ROOT/'mocap/flow_hamer_entry.py',
            ROOT/'mocap/exmr_backend.py',UPSTREAM/'ExMR/configs/hamer_model_config.yaml',
            UPSTREAM/'ExMR/exmr/preprocessing/hand_features.py',UPSTREAM/'ExMR/exmr/geometry/smoothing.py']
     files+=sorted((UPSTREAM/'ExMR/third_party/hamer/hamer').rglob('*.py'))
     return dict(version=1,code={str(p.relative_to(ROOT)):code_hash(p) for p in files},
-                models={k:file_stat(BY_KEY[k].path) for k in MODEL_KEYS},runtime=PROFILES['exmr'],
+                models={k:file_stat(BY_KEY[k].path) for k in MODEL_KEYS},runtime=runtime_profile('exmr'),
                 hands='every frame, ExMR crops, FP16 network, Gaussian rotation sigma=1 frame')
 
 
@@ -68,7 +69,8 @@ def refine(project,output,emit):
         gc.collect();torch.cuda.empty_cache()
         python=ROOT/'runtime_exmr/python.exe'
         if not python.is_file():python=ROOT/'.venv-exmr/Scripts/python.exe'
-        if not python.is_file():raise RuntimeError('HaMeR needs the base ExMR runtime. Run install.cmd to repair it.')
+        if os.name!='nt':python=ROOT/'.venv-exmr/bin/python'
+        if not python.is_file():raise RuntimeError('HaMeR needs the base ExMR runtime. Run '+('install.cmd' if os.name=='nt' else 'tools/setup_ubuntu.py')+' to repair it.')
         emit('info',message='FlowHMR HaMeR: every-frame fingers; ExMR crops and Gaussian smoothing. Body, wrists and trajectory are retained.')
         command=[str(python),'-I','-X','utf8',str(ROOT/'mocap/flow_hamer_entry.py'),str(project)]
         from collections import deque
@@ -177,4 +179,4 @@ def run(project,emit):
     load_hands(project,n)
     atomic_json(project/'flow_hamer_receipt.json',dict(identity=identity,output=file_stat(target)))
     emit('progress',current=n,total=n,phase='hamer',message='HaMeR finger smoothing complete')
-    emit('info',message=f'HaMeR finger pass: {time.monotonic()-started:.2f} s; peak allocated VRAM {torch.cuda.max_memory_allocated()/2**30:.2f} GiB; peak worker RAM {psutil.Process().memory_info().peak_wset/2**30:.2f} GiB.')
+    emit('info',message=f'HaMeR finger pass: {time.monotonic()-started:.2f} s; peak allocated VRAM {torch.cuda.max_memory_allocated()/2**30:.2f} GiB; peak worker RAM {peak_rss_bytes()/2**30:.2f} GiB.')

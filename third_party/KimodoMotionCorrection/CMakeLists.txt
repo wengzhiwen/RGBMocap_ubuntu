@@ -73,6 +73,27 @@ target_compile_definitions(motion_correction_cpp_base PUBLIC EIGEN_MPL2_ONLY)
 if(MSVC)
     # MSVC-specific flags
     target_compile_options(motion_correction_cpp_base PRIVATE /W4 /arch:AVX)
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+    # RGB MoCap: the SSE intrinsics in Math/ map to NEON through a pinned header, so the
+    # numerical source stays unedited. Keep x86's semantics where a default differs: no fused
+    # multiply-add (the x86 flags below do not enable FMA), signed char and NaN-aware min/max.
+    # Do not define SSE2NEON_PRECISE_SQRT: on aarch64 it replaces the exact hardware square root
+    # with an estimate, unlike x86's sqrtps. Division already uses the exact instruction.
+    include(FetchContent)
+    FetchContent_Declare(
+        sse2neon
+        URL https://raw.githubusercontent.com/DLTcollab/sse2neon/92f6de174717aef09033ad21568d5bb9e5470404/sse2neon.h
+        URL_HASH SHA256=78632498a57bf7e080e84cb8d74c47ce93b204cece77eab79de2908eb8bc92ed
+        DOWNLOAD_NO_EXTRACT TRUE
+    )
+    FetchContent_MakeAvailable(sse2neon)
+    target_include_directories(motion_correction_cpp_base SYSTEM PUBLIC
+        ${sse2neon_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/compat/aarch64
+    )
+    target_compile_definitions(motion_correction_cpp_base PUBLIC SSE2NEON_PRECISE_MINMAX=1)
+    target_compile_options(motion_correction_cpp_base PUBLIC -fsigned-char -ffp-contract=off)
+    target_compile_options(motion_correction_cpp_base PRIVATE -Wall -Wextra)
 else()
     # GCC/Clang flags (also applies to MinGW on Windows)
     # Enable SSE4.1 and AVX instructions for SIMD operations
