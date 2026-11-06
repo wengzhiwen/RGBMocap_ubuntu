@@ -146,10 +146,15 @@ def hardware(torch, devices):
     revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     return dict(machine=platform.machine(), cpu=platform.processor(), cpu_count=os.cpu_count(),
         ram_available_bytes=psutil.virtual_memory().available, python=platform.python_version(),
-        torch=str(torch.__version__), cuda=torch.version.cuda, git_revision=revision,
+        torch=str(torch.__version__), cuda=torch.version.cuda, nccl=torch.cuda.nccl.version(), git_revision=revision,
         tf32_matmul=torch.backends.cuda.matmul.allow_tf32, tf32_cudnn=torch.backends.cudnn.allow_tf32,
         gpus=[dict(device=d, name=torch.cuda.get_device_name(d), capability=torch.cuda.get_device_capability(d)) for d in devices],
-        nvidia_smi=telemetry, memory_note='CUDA allocation and RSS may share physical RAM on GB10; do not sum them.')
+        nvidia_smi=telemetry,
+        collective_environment={key: os.environ[key] for key in
+            ('CUDA_VISIBLE_DEVICES', 'NCCL_P2P_DISABLE', 'NCCL_SHM_DISABLE', 'NCCL_CUMEM_HOST_ENABLE',
+             'NCCL_CUMEM_ENABLE', 'NCCL_SOCKET_IFNAME', 'NCCL_IB_DISABLE', 'NCCL_ALGO', 'NCCL_PROTO', 'GLOO_SOCKET_IFNAME')
+            if key in os.environ},
+        memory_note='CUDA allocation and RSS may share physical RAM on GB10; do not sum them.')
 
 
 class RssSampler:
@@ -194,6 +199,8 @@ def generator_rank(rank, request_path, store=None):
     from mocap.model_session import set_memory_budget
     request = load(request_path)
     output = Path(request['output'])
+    experiment_code = {str(path.relative_to(ROOT)): sha256(path) for path in
+        (ROOT / 'mocap/experimental/flow_parallel.py', ROOT / 'mocap/experimental/flow_benchmark.py', ROOT / 'tools/benchmark_flow.py')}
     mode = request['mode']
     devices = [rank] if mode == 'tp2' else [0, 1] if mode == 'pp2' else [0]
     if torch.cuda.device_count() < (2 if mode != 'single' else 1):
@@ -207,7 +214,9 @@ def generator_rank(rank, request_path, store=None):
     initialized = False
     try:
         if mode == 'tp2':
-            dist.init_process_group('nccl', init_method='file://' + store, rank=rank, world_size=2, timeout=timedelta(minutes=5))
+            backend = 'gloo' if request.get('tp_transport') == 'gloo-host' else 'nccl'
+            options = dict(device_id=torch.device('cuda', rank)) if backend == 'nccl' else {}
+            dist.init_process_group(backend, init_method='file://' + store, rank=rank, world_size=2, timeout=timedelta(seconds=90), **options)
             initialized = True
         activate()
         from flowhmr.pipeline.v2m_inference import build_pipeline, load_yaml, build_feature_dict
@@ -236,10 +245,10 @@ def generator_rank(rank, request_path, store=None):
         del weights
         if mode == 'tp2':
             from .flow_parallel import tensor_parallel
-            tensor_parallel(pipeline.motion_transformer)
+            tensor_parallel(pipeline.motion_transformer, reduce_transport='host' if backend == 'gloo' else 'device')
         elif mode == 'pp2':
             from .flow_parallel import pipeline_parallel
-            pipeline_parallel(pipeline.motion_transformer)
+            pipeline_parallel(pipeline.motion_transformer, peer_transport=request.get('peer_transport', 'direct'))
         feature = build_feature_dict(tokens, relative_camera(rt), device)
         for d in devices: torch.cuda.synchronize(d)
         load_seconds = time.perf_counter() - started
@@ -284,10 +293,12 @@ def generator_rank(rank, request_path, store=None):
             del motion
         if conditioning_identity(project) != identity:
             raise ValueError('Conditioning or model source changed during measurement.')
+        if any(sha256(ROOT / name) != digest for name, digest in experiment_code.items()):
+            raise ValueError('Experimental benchmark source changed during measurement.')
         if rank == 0:
             reference_path = Path(request['reference']) if request['reference'] else output / 'reference.pt'
             atomic_json(output / 'result.json', dict(schema=1, scope='warm-generator', mode=mode, passed=True,
-                identity=identity, hardware=info, hardware_after=hardware(torch, devices),
+                identity=identity, experiment_code=experiment_code, hardware=info, hardware_after=hardware(torch, devices),
                 cpu_threads=torch.get_num_threads(), frames=n, warmups=request['warmups'], rounds=results,
                 load_seconds=load_seconds, reference_sha256=sha256(reference_path),
                 partition=getattr(pipeline.motion_transformer, '_experimental_parallel', None),

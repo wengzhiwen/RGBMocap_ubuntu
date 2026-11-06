@@ -39,19 +39,27 @@ class ColumnShard(nn.Module):
 
 
 class RowShard(nn.Module):
-    def __init__(self, source, columns, group):
+    def __init__(self, source, columns, group, reduce_transport):
         super().__init__()
         self.weight = nn.Parameter(source.weight.detach().index_select(1, columns).clone(), requires_grad=False)
         self.bias = None if source.bias is None else nn.Parameter(source.bias.detach().clone(), requires_grad=False)
         self.in_features = len(columns)
         self.out_features = source.out_features
         self.group = group
+        self.reduce_transport = reduce_transport
 
     def forward(self, x):
         if self.training or torch.is_grad_enabled() or torch.is_autocast_enabled():
             raise RuntimeError('Tensor parallel reductions support inference only.')
         result = F.linear(x, self.weight, None)
-        dist.all_reduce(result, op=dist.ReduceOp.SUM, group=self.group)
+        if self.reduce_transport == 'host':
+            # Explicit fallback for broken device peer/IPC paths. Full FP32
+            # partial products cross CPU memory; no quantization or averaging.
+            host = result.cpu()
+            dist.all_reduce(host, op=dist.ReduceOp.SUM, group=self.group)
+            result = host.to(x.device)
+        else:
+            dist.all_reduce(result, op=dist.ReduceOp.SUM, group=self.group)
         # Replicated bias is added once, after the sum of partial dot products.
         return result if self.bias is None else result + self.bias
 
@@ -62,11 +70,15 @@ def _slice(size, rank, world, device):
     return torch.arange(rank * (size // world), (rank + 1) * (size // world), device=device)
 
 
-def tensor_parallel(model, group=None):
+def tensor_parallel(model, group=None, reduce_transport='device'):
     """Mutate a fresh model into two attention/MLP shards; each rank gets full inputs."""
     _require_model(model)
     if not dist.is_initialized() or dist.get_world_size(group) != 2:
         raise ValueError('TP2 requires an initialized two-rank process group.')
+    if reduce_transport not in ('device', 'host'):
+        raise ValueError('Unknown reduction transport.')
+    if reduce_transport == 'host' and dist.get_backend(group) != 'gloo':
+        raise ValueError('Host reductions require a Gloo process group.')
     rank, world = dist.get_rank(group), dist.get_world_size(group)
     before = sum(p.numel() for p in model.parameters())
     for block in model.double_blocks:
@@ -80,13 +92,13 @@ def tensor_parallel(model, group=None):
             name = stream + '_qkv'
             setattr(block, name, ColumnShard(getattr(block, name), qkv))
             name = stream + '_out_proj'
-            setattr(block, name, RowShard(getattr(block, name), heads, group))
+            setattr(block, name, RowShard(getattr(block, name), heads, group, reduce_transport))
             mlp = getattr(block, stream + '_mlp')
             if not isinstance(mlp.norm, nn.Identity):
                 raise ValueError('MLP channel normalization needs a separate distributed implementation.')
             channels = _slice(mlp.fc1.out_features, rank, world, dev)
             mlp.fc1 = ColumnShard(mlp.fc1, channels)
-            mlp.fc2 = RowShard(mlp.fc2, channels, group)
+            mlp.fc2 = RowShard(mlp.fc2, channels, group, reduce_transport)
         block.num_heads //= world
     for block in model.single_blocks:
         if block.num_heads % world:
@@ -98,35 +110,38 @@ def tensor_parallel(model, group=None):
         rows = torch.cat([heads + k * width for k in range(3)] + [channels + 3 * width])
         columns = torch.cat([heads, channels + width])
         block.linear1 = ColumnShard(block.linear1, rows)
-        block.linear2 = RowShard(block.linear2, columns, group)
+        block.linear2 = RowShard(block.linear2, columns, group, reduce_transport)
         # These fields only describe the local fused projection/reshape in forward.
         # LayerNorm, residuals and modulation keep their full original dimensions.
         block.feat_dim //= world
         block.mlp_hidden_dim //= world
         block.num_heads //= world
-    model._experimental_parallel = dict(mode='tp2', rank=rank, world_size=world,
+    model._experimental_parallel = dict(mode='tp2', rank=rank, world_size=world, reduce_transport=reduce_transport,
         parameters_before=before, parameters_local=sum(p.numel() for p in model.parameters()),
         replicated='input/condition encoders, token refiner, norms, modulation, final head')
     return model.eval()
 
 
-def _move(value, device):
+def _move(value, device, peer_transport='direct'):
     if isinstance(value, torch.Tensor):
+        if peer_transport == 'host' and value.device.type == device.type == 'cuda' and value.device != device:
+            return value.cpu().to(device)
         return value.to(device)
     if is_dataclass(value) and not isinstance(value, type):
-        return replace(value, **{field.name: _move(getattr(value, field.name), device) for field in fields(value)})
+        return replace(value, **{field.name: _move(getattr(value, field.name), device, peer_transport) for field in fields(value)})
     if isinstance(value, tuple):
-        return tuple(_move(v, device) for v in value)
+        return tuple(_move(v, device, peer_transport) for v in value)
     if isinstance(value, list):
-        return [_move(v, device) for v in value]
+        return [_move(v, device, peer_transport) for v in value]
     if isinstance(value, dict):
-        return {k: _move(v, device) for k, v in value.items()}
+        return {k: _move(v, device, peer_transport) for k, v in value.items()}
     return value
 
 
 class _Transfers:
-    def __init__(self):
+    def __init__(self, peer_transport):
         self.cache = {}
+        self.peer_transport = peer_transport
 
     def clear(self, *unused):
         self.cache.clear()
@@ -135,7 +150,7 @@ class _Transfers:
         key = (id(value), str(device))
         item = self.cache.get(key)
         if item is None or item[0] is not value:
-            item = (value, _move(value, device))
+            item = (value, _move(value, device, self.peer_transport))
             self.cache[key] = item
         return item[1]
 
@@ -143,6 +158,8 @@ class _Transfers:
 class DeviceBlock(nn.Module):
     def __init__(self, inner, device, transfers, return_device=None):
         super().__init__()
+        if transfers.peer_transport == 'host' and any(p.device.type == 'cuda' and p.device != torch.device(device) for p in inner.parameters()):
+            inner.cpu()
         self.inner = inner.to(device)
         self.device = torch.device(device)
         self.transfers = transfers
@@ -153,20 +170,22 @@ class DeviceBlock(nn.Module):
             raise RuntimeError('Pipeline experiments support inference only.')
         if kwargs.get('return_attn') or kwargs.get('attn_collector') is not None:
             raise ValueError('Attention-map collection is outside this inference experiment.')
-        args = tuple(_move(value, self.device) for value in args)
+        args = tuple(_move(value, self.device, self.transfers.peer_transport) for value in args)
         static = {'adapter', 'attn_mask', 'attention_plan'}
-        kwargs = {name: (self.transfers.static(value, self.device) if name in static else _move(value, self.device))
+        kwargs = {name: (self.transfers.static(value, self.device) if name in static else _move(value, self.device, self.transfers.peer_transport))
                   for name, value in kwargs.items()}
         output = self.inner(*args, **kwargs)
-        return output if self.return_device is None else _move(output, self.return_device)
+        return output if self.return_device is None else _move(output, self.return_device, self.transfers.peer_transport)
 
 
-def pipeline_parallel(model, devices=('cuda:0', 'cuda:1'), split=None):
+def pipeline_parallel(model, devices=('cuda:0', 'cuda:1'), split=None, peer_transport='direct'):
     """Place contiguous main-network blocks on two devices, preserving the full sequence."""
     _require_model(model)
     if len(devices) != 2:
         raise ValueError('PP2 needs exactly two devices.')
     devices = tuple(map(torch.device, devices))
+    if peer_transport not in ('direct', 'host'):
+        raise ValueError('Unknown pipeline transfer transport.')
     if devices[0].type == 'cuda' and devices[0] == devices[1]:
         raise ValueError('PP2 needs distinct CUDA devices.')
     blocks = list(model.double_blocks) + list(model.single_blocks)
@@ -175,8 +194,10 @@ def pipeline_parallel(model, devices=('cuda:0', 'cuda:1'), split=None):
         split = min(range(1, len(blocks)), key=lambda k: abs(sum(counts[:k]) - sum(counts) / 2))
     if not 0 < split < len(blocks):
         raise ValueError('The pipeline split must leave blocks on both devices.')
+    if peer_transport == 'host' and any(p.device.type == 'cuda' and p.device != devices[0] for p in model.parameters()):
+        model.cpu()
     model.to(devices[0])
-    transfers = _Transfers()
+    transfers = _Transfers(peer_transport)
     for index, block in enumerate(blocks):
         device = devices[0] if index < split else devices[1]
         # Return the last full hidden state to the original device before the
@@ -188,7 +209,7 @@ def pipeline_parallel(model, devices=('cuda:0', 'cuda:1'), split=None):
             model.single_blocks[index - len(model.double_blocks)] = wrapped
     model.register_forward_pre_hook(transfers.clear)
     model.register_forward_hook(lambda *unused: transfers.clear(), always_call=True)
-    model._experimental_parallel = dict(mode='pp2', devices=list(map(str, devices)), split=split,
+    model._experimental_parallel = dict(mode='pp2', devices=list(map(str, devices)), split=split, peer_transport=peer_transport,
         blocks=len(blocks), block_parameters_per_stage=[sum(counts[:split]), sum(counts[split:])],
         overlap=False, note='One full-sequence clip; no microbatch overlap.')
     return model.eval()

@@ -189,6 +189,7 @@ def generator(args):
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     request = dict(mode=args.mode, project=str(args.project.resolve()), output=str(output),
+        peer_transport=args.peer_transport, tp_transport=args.tp_transport,
         warmups=args.warmups, rounds=args.rounds, migration=gate, baseline=baseline,
         reference=str(Path(args.reference).resolve()) if args.reference else None)
     write(output / 'request.json', request)
@@ -299,6 +300,8 @@ def parser():
     gen.add_argument('--project', type=Path, required=True, help='Trusted local conditioning project, read only.')
     gen.add_argument('--output', type=Path, required=True, help='New, private experiment folder.')
     gen.add_argument('--mode', choices=('single', 'tp2', 'pp2'), default='single')
+    gen.add_argument('--peer-transport', choices=('direct', 'host'), default='direct', help='PP2: device copies, or explicit CPU staging if peer access is broken.')
+    gen.add_argument('--tp-transport', choices=('nccl', 'gloo-host'), default='nccl', help='TP2: GPU NCCL, or explicit FP32 CPU-staged Gloo reductions.')
     gen.add_argument('--rounds', type=int, default=5)
     gen.add_argument('--warmups', type=int, default=1)
     gen.add_argument('--baselines', type=Path, nargs=2, default=[])

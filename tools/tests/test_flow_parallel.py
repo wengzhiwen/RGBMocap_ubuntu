@@ -40,7 +40,7 @@ def _tp_child(rank, store, output):
     dist.init_process_group('gloo', init_method='file://' + store, rank=rank, world_size=2, timeout=timedelta(seconds=30))
     try:
         results = []
-        for start, skip in ((False, False), (True, True)):
+        for start, skip, transport in ((False, False, 'device'), (True, True, 'device'), (False, False, 'host'), (True, True, 'host')):
             model, args = model_and_inputs(start, skip)
             masked = {**args, 'x_mask_temporal': args['x_mask_temporal'].clone(),
                       'ctxt_mask_temporal': args['ctxt_mask_temporal'].clone()}
@@ -48,7 +48,7 @@ def _tp_child(rank, store, output):
             masked['ctxt_mask_temporal'][:, -3:] = False
             with torch.no_grad():
                 expected = [model(**batch).clone() for batch in (args, masked)]
-                tensor_parallel(model)
+                tensor_parallel(model, reduce_transport=transport)
                 assert model._experimental_parallel['parameters_local'] < model._experimental_parallel['parameters_before']
                 for batch, reference in zip((args, masked), expected):
                     actual = model(**batch)
@@ -80,18 +80,18 @@ class FlowParallel(unittest.TestCase):
             base = str(Path(folder) / 'rank')
             mp.spawn(_tp_child, args=(str(Path(folder) / 'store'), base), nprocs=2, join=True)
             results = [json.loads(Path(base + str(rank) + '.json').read_text()) for rank in range(2)]
-        self.assertEqual(len(results[0]), 4)
+        self.assertEqual(len(results[0]), 8)
         self.assertEqual(results[0], results[1])
 
     def test_pp2_full_network_preserves_output_and_padding(self):
         import torch
         from mocap.experimental.flow_parallel import pipeline_parallel
-        for start, skip in ((False, False), (True, True)):
+        for start, skip, transport in ((False, False, 'direct'), (True, True, 'direct'), (False, False, 'host'), (True, True, 'host')):
             model, args = model_and_inputs(start, skip)
             args['x_mask_temporal'][:, -2:] = False
             args['ctxt_mask_temporal'][:, -3:] = False
             reference = copy.deepcopy(model)
-            pipeline_parallel(model, devices=('cpu', 'cpu'))
+            pipeline_parallel(model, devices=('cpu', 'cpu'), peer_transport=transport)
             with torch.no_grad():
                 expected, actual = reference(**args), model(**args)
             self.assertTrue(torch.equal(expected, actual))
