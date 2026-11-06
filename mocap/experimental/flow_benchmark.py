@@ -250,7 +250,7 @@ def generator_rank(rank, request_path, store=None):
         from flowhmr.core.bodymodels.smpl_skeleton import SMPLSkeleton
         skeleton = SMPLSkeleton(model_path=str(BY_KEY['smplh'].path))
         if request['reference']:
-            if sha256(request['reference']) != request['baseline']['reference_sha256']:
+            if sha256(Path(request['reference'])) != request['baseline']['reference_sha256']:
                 raise ValueError('Reference file does not belong to the PRO 4000 baseline.')
         results = []
         for repetition in range(-request['warmups'], request['rounds']):
