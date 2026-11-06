@@ -1,5 +1,9 @@
 # Fresh deployment on a second GB10 — 2026-11-07
 
+**GUI follow-up:** a later user run exposed a painting-binding abort after
+reconstruction. See the [diagnosis, fix and playback checks](gb10-gui-crash-2026-11-07.md).
+The original static GUI check below did not establish sustained playback safety.
+
 The published `codex/ubuntu-port` branch deployed successfully on a second
 NVIDIA GB10 running Ubuntu Desktop. Fresh FlowHMR + HaMeR reconstruction,
 moving-camera estimation, native correction and source FBX export passed

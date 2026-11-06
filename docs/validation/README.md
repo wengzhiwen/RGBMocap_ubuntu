@@ -1,5 +1,8 @@
 # Published Ubuntu migration evidence
 
+The [GB10 GUI crash follow-up](gb10-gui-crash-2026-11-07.md) records a subsequent
+post-reconstruction abort, its ARM64 Qt binding fix and actual playback checks.
+
 The [migration and benchmark report](../BENCHMARK_RESULTS_UBUNTU.md) records
 the completed amd64 and GB10 tests and their limits. The accompanying
 [machine-readable measurements](ubuntu-migration-2026-11-06.json) preserve

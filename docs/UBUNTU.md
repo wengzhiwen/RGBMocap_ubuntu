@@ -39,6 +39,7 @@ numerical environments remain unchanged. Existing ARM64 installs should run
 `python3 tools/setup_ubuntu.py --profiles shared`, with the GUI closed.
 Setup and `./rgbmocap.sh doctor` now exercise these bindings using the headless
 `tools/check_qt_runtime.py` probe rather than relying only on import success.
+See the [crash follow-up and 60-second GB10 playback check](validation/gb10-gui-crash-2026-11-07.md).
 
 ## Prerequisites
 
@@ -178,7 +179,8 @@ Spark notes:
 | CUDA on GB10 | Matmul and CUDA NMS passed in all three runtimes; FP16 convolution and FP32/FP16 attention also passed |
 | GB10 tracking | Video preparation and 16-frame GPU tracking passed |
 | Complete GB10 FlowHMR + HaMeR + correction + source FBX | Passed the 60-frame static-camera public sample, including cached rerun |
-| GB10 ground-truth quality and desktop GUI | Unverified; the host was operated through SSH |
+| GB10 ground-truth quality | Unverified |
+| GB10 desktop GUI | Native single-person mesh playback passed after the ARM64 Qt fix; see the [crash follow-up](validation/gb10-gui-crash-2026-11-07.md) |
 
 See the [validation record](UBUNTU_VALIDATION.md#arm64-cpu-checks) for details.
 
