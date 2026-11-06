@@ -575,6 +575,96 @@ class CliRouting(TempRoot):
             return (3 if stage == failure else 0), events
         return runner, calls, project
 
+    def template(self, workspace=False, **overrides):
+        settings = dict(flow_options=dict(camera_interval=-1, fast_sam=False, sam_batch4=False,
+                        sam_gpu_crop=False, sam_hand_stride4=False, hamer=True),
+                        pipeline=dict(model='flowhmr', result='corrected_initial'),
+                        correction=dict(auto_floor=False, floor=.12, mode='multi_level',
+                                        preset='strong', foot_lock=False, hand_lock=True, pelvis_offset=.02),
+                        source=dict(path='old.mp4'), contacts=['never-copy'], receipts={'old': True})
+        settings.update(overrides)
+        if workspace:
+            settings = dict(workspace_version=2, models={'flowhmr': {'settings':
+                            dict(settings, result=settings['pipeline']['result'])}})
+        path = self.root / 'template' / 'project.json'
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(json.dumps(settings))
+        return path
+
+    def test_template_overrides_flags_and_keeps_source_untouched(self):
+        for workspace in (False, True):
+            with self.subTest(workspace=workspace):
+                path = self.template(workspace)
+                before = path.read_bytes()
+                runner, calls, _ = self.fake_runner()
+                args = self.flow_args('--template', str(path), '--no-hamer', '--camera-interval=5',
+                                      '--correction-preset', 'weak', '--start', '1', '--end', '2',
+                                      '--compute-mode', 'low_memory')
+                with mock.patch.object(ubuntu_cli, 'missing_models', return_value=[]), mock.patch('builtins.print') as output:
+                    self.assertEqual(ubuntu_cli.command_flow(args, runner), 0)
+                self.assertIn('correct', [call['stage'] for call in calls])
+                prepare = calls[0]['arguments']
+                for flag, value in (('--floor', '0.12'), ('--correction-preset', 'strong'),
+                                    ('--correction-mode', 'multi_level'), ('--foot-lock', '0'),
+                                    ('--hand-lock', '1'), ('--start', '1.0'), ('--end', '2.0')):
+                    self.assertEqual(prepare[prepare.index(flag) + 1], value)
+                self.assertEqual(calls[0]['env']['RGB_MOCAP_FLOW_HAMER'], '1')
+                self.assertEqual(calls[0]['env']['RGB_MOCAP_FLOW_INTERVAL'], '-1')
+                self.assertEqual(calls[0]['env']['RGB_MOCAP_COMPUTE_MODE'], 'low_memory')
+                self.assertTrue(any('Ignored command-line' in str(call) and '--no-hamer' in str(call)
+                                    for call in output.call_args_list))
+                self.assertEqual(path.read_bytes(), before)
+                self.assertNotIn('old.mp4', str(calls))
+                self.assertFalse(args.project.exists())  # fake runner did not create it
+
+    def test_workspace_template_falls_back_to_model_manifest(self):
+        path = self.template()
+        child = path.parent / 'flowhmr'
+        child.mkdir()
+        (child / 'project.json').write_bytes(path.read_bytes())
+        path.write_text(json.dumps(dict(workspace_version=2, models={'flowhmr': {'active': 'flowhmr'}})))
+        destination = self.root / 'new-project'
+        args = self.flow_args('--template', str(path), '--project', str(destination), '--dry-run')
+        with mock.patch.object(ubuntu_cli, 'missing_models', return_value=[]), mock.patch('builtins.print'):
+            self.assertEqual(ubuntu_cli.command_flow(args), 0)
+        self.assertEqual(args.project, destination)
+        self.assertTrue(args.hamer)
+        self.assertFalse(destination.exists())
+        path.write_text(json.dumps(dict(workspace_version=2, models={'flowhmr': {'active': '../outside'}})))
+        with mock.patch('builtins.print'):
+            self.assertEqual(ubuntu_cli.command_flow(self.flow_args('--template', str(path))), 2)
+
+    def test_template_dry_run_reports_effective_configuration(self):
+        import io
+        path = self.template(flow_options={'hamer': False}, pipeline={'model': 'flowhmr', 'result': 'initial'})
+        args = self.flow_args('--template', str(path), '--hamer', '--correct', '--dry-run')
+        runner, calls, _ = self.fake_runner()
+        output = io.StringIO()
+        with mock.patch.object(ubuntu_cli, 'missing_models', return_value=[]), mock.patch('sys.stdout', output):
+            self.assertEqual(ubuntu_cli.command_flow(args, runner), 0)
+        plan = json.loads(output.getvalue())
+        self.assertFalse(plan['flow_options']['hamer'])
+        self.assertNotIn('correct', plan['stages'])
+        self.assertEqual(calls, [])
+
+    def test_invalid_templates_and_unsafe_destinations_start_no_workers(self):
+        for overrides in ({'pipeline': {'model': 'exmr'}}, {'flow_options': {'hamer': 'false'}},
+                          {'flow_options': {'camera_interval': 3}}, {'correction': {'pelvis_offset': 9}}):
+            path = self.template(**overrides)
+            runner, calls, _ = self.fake_runner()
+            with mock.patch('builtins.print'):
+                self.assertEqual(ubuntu_cli.command_flow(self.flow_args('--template', str(path)), runner), 2)
+            self.assertEqual(calls, [])
+        path = self.template()
+        for destination in (path.parent, self.root):
+            runner, calls, _ = self.fake_runner()
+            with mock.patch('builtins.print'):
+                self.assertEqual(ubuntu_cli.command_flow(self.flow_args('--template', str(path), '--project', str(destination)), runner), 2)
+            self.assertEqual(calls, [])
+        path.write_text('not json')
+        with mock.patch('builtins.print'):
+            self.assertEqual(ubuntu_cli.command_flow(self.flow_args('--template', str(path))), 2)
+
     def test_known_stages_cover_worker_choices(self):
         source = (ROOT / 'mocap/worker.py').read_text(encoding='utf-8')
         choices = ast.literal_eval(re.search(r'choices=(\["diagnose".*?\])\)', source).group(1))

@@ -257,7 +257,97 @@ def missing_models(stages, camera_interval=0, hamer=False):
     return list(dict.fromkeys(names))
 
 
+# Only these settings cross the template boundary; never copy project state or receipts.
+TEMPLATE_FLOW_FIELDS = {'camera_interval': 'camera_interval', 'fast_sam': 'fast_sam',
+                        'sam_batch4': 'sam_batch', 'sam_gpu_crop': 'gpu_crop',
+                        'sam_hand_stride4': 'hand_stride4', 'hamer': 'hamer'}
+TEMPLATE_FLAGS = ('--hamer', '--no-hamer', '--fast-sam', '--no-fast-sam', '--sam-batch', '--no-sam-batch',
+                  '--gpu-crop', '--no-gpu-crop', '--hand-stride4', '--no-hand-stride4', '--camera-interval',
+                  '--correct', '--correction-preset', '--correction-mode', '--floor', '--foot-lock',
+                  '--no-foot-lock', '--hand-lock', '--no-hand-lock', '--pelvis-offset')
+
+
+class FlowParser(argparse.ArgumentParser):
+    def parse_known_args(self, args=None, namespace=None):
+        tokens = list(sys.argv[1:] if args is None else args)
+        result, rest = super().parse_known_args(tokens, namespace)
+        result.processing_flags = list(dict.fromkeys(token.split('=')[0] for token in tokens
+                                                    if token.split('=')[0] in TEMPLATE_FLAGS))
+        return result, rest
+
+
+def apply_flow_template(args):
+    """Read GUI settings only, and route preparation to an independent destination."""
+    from mocap.correction_settings import correction_options
+    from mocap.paths import PROJECTS
+    import uuid
+    path = Path(args.template).resolve()
+    state = json.loads(path.read_text(encoding='utf-8'))
+    if not isinstance(state, dict):
+        raise ValueError('Template must contain a project JSON object.')
+    if 'workspace_version' in state:
+        if state['workspace_version'] != 2:
+            raise ValueError('Unsupported template workspace version.')
+        entry = state.get('models', {}).get('flowhmr', {})
+        settings = entry.get('settings')
+        # Older workspaces may only retain settings in their model manifest.
+        if settings is None:
+            relative = entry.get('active', 'flowhmr')
+            child = (path.parent / relative).resolve()
+            if not child.is_relative_to(path.parent / 'flowhmr'):
+                raise ValueError('Invalid FlowHMR template model path.')
+            settings = json.loads((child / 'project.json').read_text(encoding='utf-8'))
+    else:
+        if state.get('pipeline', {}).get('model') != 'flowhmr':
+            raise ValueError('The template must be a FlowHMR project.')
+        settings = state
+    if not isinstance(settings, dict) or not isinstance(settings.get('flow_options'), dict):
+        raise ValueError('The template has no saved FlowHMR settings.')
+    flow = settings['flow_options']
+    defaults = dict(camera_interval=0, fast_sam=True, sam_batch4=True, sam_gpu_crop=True,
+                    sam_hand_stride4=True, hamer=False)
+    for key, dest in TEMPLATE_FLOW_FIELDS.items():
+        value = flow.get(key, defaults[key])
+        if key == 'camera_interval':
+            if type(value) is not int or value not in (-1, 0, 1, 2, 5, 10, 30):
+                raise ValueError('Invalid template camera_interval.')
+        elif type(value) is not bool:
+            raise ValueError('Template ' + key + ' must be a boolean.')
+        setattr(args, dest, value)
+    result = settings.get('result', settings.get('pipeline', {}).get('result'))
+    if result not in ('initial', 'corrected_initial'):
+        raise ValueError('Template must select initial or corrected_initial for FlowHMR.')
+    correction = settings.get('correction', {})
+    if not isinstance(correction, dict):
+        raise ValueError('Invalid template correction settings.')
+    for key in ('auto_floor', 'foot_lock', 'hand_lock'):
+        if key in correction and type(correction[key]) is not bool:
+            raise ValueError('Template correction ' + key + ' must be a boolean.')
+    correction = correction_options(correction)
+    args.correct = result == 'corrected_initial'
+    args.correction_preset, args.correction_mode = correction['preset'], correction['mode']
+    args.floor = None if correction['auto_floor'] else correction['floor']
+    args.foot_lock, args.hand_lock = correction['foot_lock'], correction['hand_lock']
+    args.pelvis_offset = correction['pelvis_offset']
+    if args.project is None:
+        args.project = PROJECTS / (Path(args.video).stem + '_template_' + uuid.uuid4().hex[:12])
+    destination = Path(args.project).resolve()
+    if destination == path.parent or destination.is_relative_to(path.parent) or path.parent.is_relative_to(destination):
+        raise ValueError('Template and destination must be separate project folders.')
+    if destination.exists() and (not destination.is_dir() or any(destination.iterdir())):
+        raise ValueError('With --template, --project must be a new or empty folder.')
+    ignored = getattr(args, 'processing_flags', [])
+    print('Using template processing settings: ' + str(path) +
+          ('. Ignored command-line processing options: ' + ', '.join(ignored) if ignored else ''), file=sys.stderr)
+
+
 def command_flow(args, runner=run_request_worker):
+    if getattr(args, 'template', None) is not None:
+        try:
+            apply_flow_template(args)
+        except (OSError, ValueError, TypeError, AttributeError) as error:
+            print('Invalid template: ' + str(error), file=sys.stderr)
+            return 2
     video = Path(args.video)
     if not video.is_file():
         print(f'Video not found: {video}', file=sys.stderr)
@@ -683,7 +773,7 @@ def add_common(parser):
 
 def parser():
     root = argparse.ArgumentParser(prog='rgbmocap.sh', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    commands = root.add_subparsers(dest='command', required=True)
+    commands = root.add_subparsers(dest='command', required=True, parser_class=FlowParser)
     doctor = commands.add_parser('doctor', help='Check environments, tools, native modules and models.')
     add_common(doctor)
     doctor.add_argument('--gpu', action='store_true', help='Also run a real CUDA matmul in each main environment.')
@@ -693,13 +783,14 @@ def parser():
     stages.set_defaults(handler=command_stages)
     flow = commands.add_parser('flow', help='Run FlowHMR on one video, for one person.')
     add_common(flow)
+    flow.add_argument('--template', type=Path, help='Read processing settings from a FlowHMR project.json; ignore processing flags. Destination must be new or empty.')
     flow.add_argument('--video', required=True, type=Path)
     flow.add_argument('--project', type=Path, help='Project folder; default is under projects/.')
     flow.add_argument('--start', type=float, default=0.0, help='Start of the processing range, in seconds.')
     flow.add_argument('--end', type=float, help='End of the processing range, in seconds.')
     flow.add_argument('--camera-interval', type=int, choices=(-1, 0, 1, 2, 5, 10, 30), default=0,
                       help='0 Moving/Unknown Auto; -1 Static Camera; otherwise analyze every N frames.')
-    flow.add_argument('--hamer', action='store_true', help='Optional HaMeR finger refinement in the ExMR environment; forces Fast SAM and 4-frame hands.')
+    flow.add_argument('--hamer', action=argparse.BooleanOptionalAction, help='Optional HaMeR finger refinement in the ExMR environment; forces Fast SAM and 4-frame hands.')
     for name, flag, label in (('fast_sam', 'fast-sam', 'Fast SAM'), ('sam_batch', 'sam-batch', 'adaptive Fast SAM batching'),
                               ('gpu_crop', 'gpu-crop', 'GPU hand crops'), ('hand_stride4', 'hand-stride4', '4-frame hand sampling')):
         flow.add_argument('--' + flag, dest=name, action=argparse.BooleanOptionalAction, default=True, help=f'{label} (default on).')

@@ -119,6 +119,37 @@ The CLI runs the same workers with the same project files and receipts, so the G
 - `stage` is the escape hatch: it passes native worker arguments through unchanged and returns the worker's exit code. Common options such as `--json` go before the stage name.
 - `Ctrl+C` stops the worker's whole process group, including FFmpeg and the HaMeR child.
 
+### Reuse a project's processing settings
+
+```bash
+./rgbmocap.sh flow --video new_clip.mp4 --template /path/to/old/project.json --dry-run
+./rgbmocap.sh flow --video new_clip.mp4 --template /path/to/old/project.json --project /path/to/new_project
+```
+
+`--template` accepts a FlowHMR model manifest or a version-2 workspace's
+`project.json`. For a workspace it reads the saved FlowHMR model settings,
+falling back to its model manifest when settings are absent. The template is
+read-only. Only FlowHMR options, the selected initial/corrected result and
+correction settings are inherited. Source media, trims, people, manual contact
+timings, scene state, results and receipts are not copied.
+
+The template is authoritative: processing flags (`--hamer`/`--no-hamer`, SAM,
+hand sampling, camera interval, `--correct` and correction options) are ignored,
+with one notice on stderr listing explicitly supplied flags. Missing older
+option fields use GUI defaults, never command-line overrides. HaMeR still
+forces Fast SAM and four-frame hand sampling, as in the GUI.
+`--video`, `--project`, `--start`, `--end`, `--compute-mode`,
+`--resource-safety`, `--force`, `--json` and `--dry-run` remain execution inputs.
+Resource Safety stays a local/run preference and is never imported from a project.
+Dry-run prints the effective FlowHMR options, stages and prepare arguments.
+
+The destination must be a new or empty folder, separate from the template
+folder. Omitting `--project` selects a unique folder under `projects/` to avoid
+reusing the template's video or cached state. To resume a created project,
+rerun without `--template` and provide its project path and processing options,
+or open it in the GUI. Other model templates and malformed settings are refused
+before starting a worker.
+
 Limits compared with the GUI:
 
 - `flow` handles one person with automatic tracking, and there is no **Find person** selection. The GUI remains the route for multiple people.
