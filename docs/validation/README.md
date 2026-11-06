@@ -11,6 +11,11 @@ model weights, projects, generated motion and private test videos are excluded.
 The published measurements use the bundled public sample. Private test data
 and operational records remain outside Git.
 
+The [fresh deployment on a second GB10](gb10-fresh-deployment-2026-11-07.md)
+passed from a public clone, with independent runtime installation and three
+fresh FlowHMR/HaMeR cases. Its [sanitized results](gb10-fresh-deployment-2026-11-07.json)
+record the deployment acceptance checks and remaining limits.
+
 A new-host deployment is evaluated separately: clone the published branch,
 install the independent pinned environments, build the native correction module,
 register/copy legitimate model assets, execute CUDA checks, and reconstruct/export

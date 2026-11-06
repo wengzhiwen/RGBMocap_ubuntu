@@ -25,6 +25,12 @@ the peer-transfer failure and the tested TP2/PP2 transport workarounds.
 The [standalone peer checker](CUDA_PEER_CHECK.md) validates actual copied values;
 advertised peer-access flags alone were insufficient on the tested dual-card host.
 
+A [fresh deployment on a second GB10](validation/gb10-fresh-deployment-2026-11-07.md)
+subsequently passed from the published branch without application-source fixes:
+independent pinned environments, native correction build, actual CUDA checks,
+60/690/451-frame FlowHMR + HaMeR cases, source FBX and native GUI project
+rendering. Interactive GB10 playback and target-side Blender remain unverified.
+
 ## Prerequisites
 
 - 64-bit Ubuntu on x86-64 or aarch64, an NVIDIA GPU with a current driver, and OpenGL 4.3 for the GUI viewport.
