@@ -124,6 +124,23 @@ no screen unlock or source-video modification was performed.
 - Final `doctor --gpu` had zero failures and three readiness warnings: the
   optional HandFlow and HTD environments, and auxiliary assets for other models.
 
+## Additional CLI source exports — 2026-11-06
+
+The CLI now uses the GUI's selected-result and people-scene placement guards for
+FBX, BVH and Blender source exports. On the existing 451-frame amd64 project:
+
+- Corrected Generic BVH was byte-identical to its selected source.
+- Biped BVH with a prepended T-pose contained 452 frames.
+- Blender 4.5.4 opened the actual exported portable bundle: 52 source bones,
+  30 fps, action and scene frames 0–451, one camera and a relative `//video.mp4`
+  background reference. No interactive playback or numerical camera equivalence
+  is established by this structural check.
+
+The source/export CPU regression checks passed, including unavailable/pending
+results, shared scene placement, foreign-interpreter refusal, per-format options,
+bundle overwrite refusal and cleanup of request-owned temporary paths. These
+checks do not establish character retargeting or Blender compatibility on ARM64.
+
 ## ARM64 CPU checks
 
 2026-11-06, on a CPU-only Ubuntu 24.04 aarch64 machine (glibc 2.39, 3 GB RAM). It has no NVIDIA GPU, so **nothing here establishes CUDA, GPU inference or DGX Spark behavior**. No weights, projects or real videos were used.

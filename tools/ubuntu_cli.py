@@ -22,7 +22,7 @@ sys.dont_write_bytecode = True
 os.environ.pop('PYTHONHOME', None)
 os.environ.pop('PYTHONPATH', None)
 
-from mocap.linux_runtime import SUPPORTED_MACHINES, correction_path, effective_profile, interpreter, linux_variant, normalize_machine, runtime_environment  # noqa: E402
+from mocap.linux_runtime import SETUP_HINT, SUPPORTED_MACHINES, correction_path, effective_profile, interpreter, linux_variant, normalize_machine, runtime_environment  # noqa: E402
 
 # mocap.paths reads RGB_MOCAP_DATA when it is first imported.
 os.environ.update(runtime_environment(ROOT))
@@ -301,28 +301,133 @@ def report_failure(stage, code, project=None):
 
 # Export and the escape hatch ----------------------------------------------------------
 
-def command_export(args, runner=run_worker):
-    """Export a committed result as FBX through the worker's generation checks."""
+EXPORT_STAGES = {'fbx': 'save_fbx', 'bvh': 'copy_bvh', 'blend': 'save_blend'}
+
+
+class ExportError(ValueError):
+    """A request refused before any worker starts."""
+
+
+def export_target(output, requested='auto'):
+    """Resolve (format, worker target). A Blender bundle is a new folder holding <name>.blend."""
+    output = Path(output).resolve()
+    suffix = output.suffix.lower().lstrip('.')
+    fmt = suffix if requested == 'auto' else requested
+    if fmt not in EXPORT_STAGES:
+        raise ExportError(f'Cannot infer the format of {output.name}: use a .fbx, .bvh or .blend name, or pass --format.')
+    if fmt == 'blend':
+        name = output.name[:-len('.blend')] if suffix == 'blend' else output.name
+        folder = output.with_name(name)
+        if folder.exists():
+            raise ExportError(f'{folder} already exists. Choose a new Blender bundle folder; existing files are kept.')
+        target = folder / (name + '.blend')
+    elif suffix and suffix != fmt:
+        raise ExportError(f'{output.name} does not match --format {fmt}.')
+    else:
+        target = output if suffix else output.with_name(f'{output.name}.{fmt}')
+    parent = folder.parent if fmt == 'blend' else target.parent
+    if not parent.is_dir():
+        raise ExportError(f'The destination folder does not exist: {parent}')
+    return fmt, target
+
+
+def export_options(args, fmt):
+    """Row keys from source_export_dialog.options(); an absent key keeps the worker default."""
+    for flag, value, owners in (('--bvh-profile', args.bvh_profile, ('bvh',)), ('--rig-name', args.rig_name, ('fbx', 'blend')),
+                                ('--[no-]animate-camera', args.animate_camera, ('blend',)), ('--background-refine', args.background_refine, ('blend',)),
+                                ('--camera-translation-scale', args.camera_translation_scale, ('blend',))):
+        if value is not None and fmt not in owners:
+            raise ExportError(f"{flag} applies to {' and '.join(owners)} exports, not {fmt}.")
+    row = dict(prepend_tpose=True) if args.prepend_tpose else {}
+    if args.rig_name is not None:
+        row['rig_name'] = args.rig_name
+    if fmt == 'bvh':
+        row['bvh_profile'] = args.bvh_profile or 'generic'
+    if fmt != 'blend':
+        return row
+    if args.background_refine and args.animate_camera is False:
+        raise ExportError('--background-refine needs the exported camera animation.')
+    scale = 1. if args.camera_translation_scale is None else args.camera_translation_scale
+    if not 0 <= scale <= 100:
+        raise ExportError('--camera-translation-scale must be between 0 and 100.')
+    return {**row, 'animate_camera': args.animate_camera is not False, 'background_refine': bool(args.background_refine), 'camera_translation_scale': scale}
+
+
+def require_blender():
+    from mocap.retarget.runtime import blender
+    try:
+        blender()
+    except RuntimeError:
+        where = 'Blender has no official Linux aarch64 build: set RGBMOCAP_BLENDER to your own build.' if normalize_machine() == 'aarch64' \
+            else 'Put it in runtime_character/ or set RGBMOCAP_BLENDER.'
+        raise ExportError(f'Blender bundles need Blender 4.5. {where} FBX and BVH export do not use Blender.') from None
+
+
+def export_plan(project, kind, env):
+    """The selected source and shared placement, or the reason the result cannot be exported."""
+    python = interpreter(ROOT, 'shared')
+    if not python.is_file():
+        raise RuntimeError(f'shared runtime is missing ({python}). {SETUP_HINT}')
+    # selected_export and the scene context need NumPy, so they run in the export workers' runtime.
+    code_text = ('import sys;sys.path.insert(0,sys.argv[1]);from mocap.runtime_registry import activate;activate(sys.argv[1],"shared");'
+                 'from mocap.export_plan import main;main(sys.argv[2:])')
+    code, output = capture([python, '-I', '-X', 'utf8', '-c', code_text, ROOT, project, kind], env, 300)
+    line = next((text for text in reversed(output.splitlines()) if text.startswith('@@PLAN@@')), None)
+    value = json.loads(line[len('@@PLAN@@'):]) if line else dict(error=f'Could not check the export: {last_line(output)}')
+    if 'error' in value:
+        raise ExportError(value['error'])
+    return value
+
+
+def discard_export(request, leftover):
+    """As gui.cleanup_fbx_export, after the worker ended: only exact owned paths are removed."""
+    from mocap.blend_support import cleanup
+    for path in (request, leftover):
+        try:
+            if path.is_dir():
+                cleanup(path, request)
+            else:
+                path.unlink(missing_ok=True)
+        except (OSError, ValueError) as error:
+            print(f'Could not remove {path}: {error}', file=sys.stderr)
+
+
+def command_export(args, runner=run_worker, plan=export_plan):
+    """Export a committed result through the existing workers and their generation checks."""
+    from mocap.blend_support import partial
     from mocap.paths import HOME
     from mocap.storage import atomic_json
     import uuid
     project = Path(args.project).resolve()
-    output = Path(args.output).resolve()
+    env = job_environment(args)
     try:
-        record = json.loads((project / f'{args.kind}_mixamo.json').read_text(encoding='utf-8'))
-        source = project / record['bvh_file']
-    except (OSError, ValueError, KeyError, TypeError) as error:
-        print(f'{args.kind} has no prepared result in {project}: {error}', file=sys.stderr)
+        fmt, target = export_target(args.output, args.format)
+        options = export_options(args, fmt)
+        if fmt == 'blend':
+            require_blender()
+        planned = plan(project, args.kind, env)
+        if (args.background_refine or args.camera_translation_scale is not None) and planned['model'] not in ('flowhmr', 'exmr'):
+            raise ExportError('--background-refine and --camera-translation-scale apply to FlowHMR and ExMR saved cameras.')
+    except ExportError as error:
+        print(error, file=sys.stderr)
         return 2
+    row = dict(project=str(project), kind=args.kind, source=planned['source'], target=str(target), **options)
+    if 'scene' in planned:
+        row['scene'] = planned['scene']
     folder = HOME / 'cache/worker_jobs'
     folder.mkdir(parents=True, exist_ok=True)
-    # The worker removes this request when it ends.
+    # The worker consumes this request; discard_export covers a worker that was killed.
     request = folder / (uuid.uuid4().hex + '.json')
-    atomic_json(request, [dict(project=str(project), kind=args.kind, target=str(output), source=str(source))])
-    code, _ = runner('save_fbx', ['--project', str(project), '--output', str(request)], job_environment(args), EventPrinter(args.json))
+    leftover = partial(target.parent, request) if fmt == 'blend' else target.with_name(f'.{target.name}.rgbmocap-{request.stem}.partial')
+    atomic_json(request, [row])
+    stage = EXPORT_STAGES[fmt]
+    try:
+        code, _ = runner(stage, ['--project', str(project), '--output', str(request)], env, EventPrinter(args.json))
+    finally:
+        discard_export(request, leftover)
     if code:
-        return report_failure('save_fbx', code, project)
-    print(f'Exported: {output}')
+        return report_failure(stage, code, project)
+    print(json.dumps(dict(type='exported', format=fmt, path=str(target))) if args.json else f'Exported: {target}')
     return 0
 
 
@@ -598,11 +703,18 @@ def parser():
     flow.add_argument('--force', action='store_true', help='Recompute completed stages instead of reusing them.')
     flow.add_argument('--dry-run', action='store_true', help='Print the planned stages and readiness; run nothing.')
     flow.set_defaults(handler=command_flow)
-    export = commands.add_parser('export', help='Export a prepared result as FBX.')
+    export = commands.add_parser('export', help='Export a prepared result as FBX, BVH or a portable Blender bundle.')
     add_common(export)
     export.add_argument('--project', required=True, type=Path, help='The model project reported by the flow command.')
     export.add_argument('--kind', default='initial', help='Result to export, such as initial or corrected_initial.')
-    export.add_argument('--output', required=True, type=Path)
+    export.add_argument('--output', required=True, type=Path, help='A .fbx or .bvh file, which is replaced atomically, or a new Blender bundle folder (x or x.blend makes x/x.blend).')
+    export.add_argument('--format', choices=('auto', *EXPORT_STAGES), default='auto', help='auto uses the --output suffix.')
+    export.add_argument('--prepend-tpose', action='store_true', help='Add one T-pose frame before the motion. Original frames shift by one.')
+    export.add_argument('--rig-name', help='FBX and Blender rig name; the default is SourceAnimation.')
+    export.add_argument('--bvh-profile', choices=('generic', 'biped'), help='BVH: Generic / Blender (default) or 3ds Max Biped.')
+    export.add_argument('--animate-camera', action=argparse.BooleanOptionalAction, default=None, help='Blender: export saved camera tracking (default on).')
+    export.add_argument('--background-refine', action='store_true', default=None, help='Blender: Refine Camera Rotation, for FlowHMR and ExMR (default off).')
+    export.add_argument('--camera-translation-scale', type=float, help='Blender: camera movement scale from 0 to 100, for FlowHMR and ExMR (default 1).')
     export.set_defaults(handler=command_export)
     stage = commands.add_parser('stage', help='Escape hatch: run one worker stage with its native arguments.',
                                 description='Example: stage correct --project P --result corrected_initial')

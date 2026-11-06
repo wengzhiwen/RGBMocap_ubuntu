@@ -83,6 +83,9 @@ The CLI runs the same workers with the same project files and receipts, so the G
 ./rgbmocap.sh flow --video clip.mp4 --start 0 --end 5 --hamer
 ./rgbmocap.sh flow --video clip.mp4 --camera-interval -1 --correct
 ./rgbmocap.sh export --project <reported project> --kind initial --output motion.fbx
+./rgbmocap.sh export --project <reported project> --kind corrected_initial --output motion.bvh
+./rgbmocap.sh export --project <reported project> --output biped.bvh --bvh-profile biped --prepend-tpose
+./rgbmocap.sh export --project <reported project> --output bundle.blend --animate-camera
 ./rgbmocap.sh stage correct --project <reported project> --result corrected_initial
 ./rgbmocap.sh stage import_model --model hand_hamer --video /path/to/downloaded.file
 ```
@@ -96,7 +99,7 @@ Limits compared with the GUI:
 
 - `flow` handles one person with automatic tracking, and there is no **Find person** selection. The GUI remains the route for multiple people.
 - The CLI uses the GUI's `ProcessingGuard` every 0.5 seconds for measured low-RAM stopping and stall detection. `--resource-safety off` retains stall detection, adaptive routing and actual OOM recovery. Cancellation terminates the owned process group, including children that ignore graceful termination.
-- `export` writes FBX. BVH and Blender bundles use request files from the GUI's export dialog.
+- `export` selects FBX, BVH or a portable Blender bundle from the output suffix (or `--format`). It uses the same `save_fbx`, `copy_bvh` and `save_blend` workers and generation/scene/contact guards as the GUI. BVH offers `--bvh-profile generic|biped`; `--prepend-tpose` adds one leading animation frame. A Blender target `bundle.blend` creates the new folder `bundle/` containing `bundle.blend`, video and camera metadata; existing bundle folders are refused. Blender exports require Blender 4.5. The selected `--kind` must have a current prepared result.
 
 ## Native correction, FFmpeg and Blender
 

@@ -664,7 +664,7 @@ class CliRouting(TempRoot):
             return 0, []
         args = ubuntu_cli.parser().parse_args(['export', '--project', str(project), '--output', str(self.root / 'out.fbx')])
         with mock.patch('mocap.paths.HOME', self.root), mock.patch('builtins.print'):
-            self.assertEqual(ubuntu_cli.command_export(args, runner), 0)
+            self.assertEqual(ubuntu_cli.command_export(args, runner, plan=lambda *_: dict(model='flowhmr', source=str(project / 'initial.bvh'))), 0)
         self.assertEqual(seen['stage'], 'save_fbx')
         self.assertEqual(seen['rows'], [dict(project=str(project), kind='initial', target=str(self.root / 'out.fbx'), source=str(project / 'initial.bvh'))])
         self.assertEqual(seen['arguments'][:2], ['--project', str(project)])
