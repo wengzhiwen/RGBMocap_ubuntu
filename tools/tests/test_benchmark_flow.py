@@ -70,6 +70,15 @@ class Prerequisites(unittest.TestCase):
         self.assertEqual(json.loads((template / 'project.json').read_text()), state)
         with self.assertRaises(ValueError):
             seed_canonical_project(template, self.root / 'new', 60)
+        state['end'] += 5e-6
+        (template / 'project.json').write_text(json.dumps(state))
+        with self.assertRaisesRegex(ValueError, 'range'):
+            seed_canonical_project(template, self.root / 'bad-range', 60)
+        state['end'] = 2.
+        (template / 'project.json').write_text(json.dumps(state))
+        (template / 'input.mp4').unlink()
+        with self.assertRaisesRegex(ValueError, 'missing input'):
+            seed_canonical_project(template, self.root / 'missing', 60)
 
 
 @unittest.skipUnless(importlib.util.find_spec('torch') and importlib.util.find_spec('einops'), 'requires pinned Torch/einops')

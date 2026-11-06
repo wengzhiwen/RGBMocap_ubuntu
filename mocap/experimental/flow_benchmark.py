@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 import platform
 import subprocess
-import threading
 import time
 
 from mocap.paths import ROOT
@@ -15,6 +14,25 @@ from mocap.storage import atomic_json, sha256
 
 def load(path):
     return json.loads(Path(path).read_text(encoding='utf-8'))
+
+
+def decoder_identity(request):
+    """CPU-only check in the actual inference profile's OpenCV environment."""
+    import cv2
+    capture = cv2.VideoCapture(str(Path(request['project']) / 'input.mp4'))
+    digest, count = hashlib.sha256(), 0
+    try:
+        while True:
+            ok, frame = capture.read()
+            if not ok: break
+            digest.update(frame.tobytes())
+            count += 1
+    finally:
+        capture.release()
+    if count != request['frames']:
+        raise ValueError('Decoder frame count mismatch.')
+    atomic_json(Path(request['output']) / request['decoder_report'],
+        dict(frames=count, decoded_sha256=digest.hexdigest(), opencv=cv2.__version__))
 
 
 def conditioning_identity(project):
@@ -116,7 +134,10 @@ def differences(reference, actual, skeleton=None):
     """Numerical disagreement, not accuracy against ground truth."""
     import torch
     metrics = {}
-    for key in ('trans', 'shapes', 'rot6d', 'foot_contacts'):
+    keys = ('trans', 'shapes', 'rot6d', 'foot_contacts', 'local_joints_positions', 'smooth_root_pos', 'pelvis_world')
+    for key in keys:
+        if key not in reference and key not in actual:
+            continue
         a, b = reference[key].cpu(), actual[key].cpu()
         if a.shape != b.shape or not torch.isfinite(b).all():
             raise ValueError('Invalid parallel result: ' + key)
@@ -147,46 +168,16 @@ def hardware(torch, devices):
     return dict(machine=platform.machine(), cpu=platform.processor(), cpu_count=os.cpu_count(),
         ram_available_bytes=psutil.virtual_memory().available, python=platform.python_version(),
         torch=str(torch.__version__), cuda=torch.version.cuda, nccl=torch.cuda.nccl.version(), git_revision=revision,
+        git_dirty=bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip()),
         tf32_matmul=torch.backends.cuda.matmul.allow_tf32, tf32_cudnn=torch.backends.cudnn.allow_tf32,
-        gpus=[dict(device=d, name=torch.cuda.get_device_name(d), capability=torch.cuda.get_device_capability(d)) for d in devices],
+        gpus=[dict(device=d, name=torch.cuda.get_device_name(d), capability=torch.cuda.get_device_capability(d),
+                   uuid=str(getattr(torch.cuda.get_device_properties(d), 'uuid', 'unavailable'))) for d in devices],
         nvidia_smi=telemetry,
         collective_environment={key: os.environ[key] for key in
             ('CUDA_VISIBLE_DEVICES', 'NCCL_P2P_DISABLE', 'NCCL_SHM_DISABLE', 'NCCL_CUMEM_HOST_ENABLE',
              'NCCL_CUMEM_ENABLE', 'NCCL_SOCKET_IFNAME', 'NCCL_IB_DISABLE', 'NCCL_ALGO', 'NCCL_PROTO', 'GLOO_SOCKET_IFNAME')
             if key in os.environ},
         memory_note='CUDA allocation and RSS may share physical RAM on GB10; do not sum them.')
-
-
-class RssSampler:
-    def __init__(self, include_children=False):
-        self.include_children = include_children
-
-    def __enter__(self):
-        import psutil
-        self.process = psutil.Process()
-        self.peak = self.process.memory_info().rss
-        self.stop = threading.Event()
-        self.thread = threading.Thread(target=self.sample, daemon=True)
-        self.thread.start()
-        return self
-
-    def sample(self):
-        while not self.stop.wait(.05):
-            self.peak = max(self.peak, self.current())
-
-    def current(self):
-        import psutil
-        total = self.process.memory_info().rss
-        if self.include_children:
-            for child in self.process.children(recursive=True):
-                try: total += child.memory_info().rss
-                except (psutil.NoSuchProcess, psutil.AccessDenied): pass
-        return total
-
-    def __exit__(self, *unused):
-        self.peak = max(self.peak, self.current())
-        self.stop.set()
-        self.thread.join()
 
 
 def generator_rank(rank, request_path, store=None):
@@ -223,6 +214,10 @@ def generator_rank(rank, request_path, store=None):
         from mocap.models import BY_KEY
         project = Path(request['project'])
         identity = conditioning_identity(project)
+        gate_identity = request['migration']['checks']['generator_identity']
+        for key in ('models', 'auxiliary', 'generator_code', 'options'):
+            if identity[key] != gate_identity.get(key):
+                raise ValueError('Migration gate is stale for the current model/code: ' + key)
         if request['baseline'] and identity != request['baseline']['identity']:
             raise ValueError('Conditioning/weights/code differs from the established baselines.')
         tokens = torch.load(project / 'flow_tokens.pt', map_location='cpu', weights_only=False)
@@ -252,6 +247,10 @@ def generator_rank(rank, request_path, store=None):
         feature = build_feature_dict(tokens, relative_camera(rt), device)
         for d in devices: torch.cuda.synchronize(d)
         load_seconds = time.perf_counter() - started
+        load_peaks = [dict(device=d, allocated=torch.cuda.max_memory_allocated(d), reserved=torch.cuda.max_memory_reserved(d)) for d in devices]
+        # Release only unused allocator blocks left by model partitioning.
+        # The excluded warm-up establishes the steady-state allocation pool.
+        torch.cuda.empty_cache()
         info = hardware(torch, devices)
         if request['baseline'] and (info['torch'] != request['baseline']['hardware']['torch'] or info['cuda'] != request['baseline']['hardware']['cuda']):
             raise ValueError('Compare dual-card results in the same runtime as the PRO 4000 baseline.')
@@ -267,12 +266,12 @@ def generator_rank(rank, request_path, store=None):
                 torch.cuda.synchronize(d)
                 torch.cuda.reset_peak_memory_stats(d)
             if initialized: dist.barrier()
-            with RssSampler() as rss:
-                started = time.perf_counter()
-                with torch.inference_mode():
-                    motion = pipeline.generate(feature=feature, seeds=[0], length=n, cfg_scale=1.)
-                for d in devices: torch.cuda.synchronize(d)
-                seconds = time.perf_counter() - started
+            started = time.perf_counter()
+            with torch.inference_mode():
+                motion = pipeline.generate(feature=feature, seeds=[0], length=n, cfg_scale=1.)
+            for d in devices: torch.cuda.synchronize(d)
+            ended = time.perf_counter()
+            seconds = ended - started
             peaks = [dict(device=d, allocated=torch.cuda.max_memory_allocated(d), reserved=torch.cuda.max_memory_reserved(d)) for d in devices]
             motion = {k: v.detach().cpu() if isinstance(v, torch.Tensor) else v for k, v in motion.items()}
             validate_motion(motion, n)
@@ -282,9 +281,11 @@ def generator_rank(rank, request_path, store=None):
             metrics = differences(reference, motion, skeleton)
             if initialized:
                 rows = [None, None]
-                dist.all_gather_object(rows, dict(seconds=seconds, peaks=peaks, rss_bytes=rss.peak, differences=metrics))
+                dist.all_gather_object(rows, dict(pid=os.getpid(), seconds=seconds, peaks=peaks,
+                    started_monotonic=started, ended_monotonic=ended, load_peaks=load_peaks, differences=metrics))
             else:
-                rows = [dict(seconds=seconds, peaks=peaks, rss_bytes=rss.peak, differences=metrics)]
+                rows = [dict(pid=os.getpid(), seconds=seconds, peaks=peaks,
+                    started_monotonic=started, ended_monotonic=ended, load_peaks=load_peaks, differences=metrics)]
             item = dict(round=repetition, seconds=max(row['seconds'] for row in rows), ranks=rows)
             if repetition >= 0: results.append(item)
             if rank == 0:
@@ -300,7 +301,7 @@ def generator_rank(rank, request_path, store=None):
             atomic_json(output / 'result.json', dict(schema=1, scope='warm-generator', mode=mode, passed=True,
                 identity=identity, experiment_code=experiment_code, hardware=info, hardware_after=hardware(torch, devices),
                 cpu_threads=torch.get_num_threads(), frames=n, warmups=request['warmups'], rounds=results,
-                load_seconds=load_seconds, reference_sha256=sha256(reference_path),
+                load_seconds=load_seconds, load_peaks=[peak for row in rows for peak in row['load_peaks']], reference_sha256=sha256(reference_path),
                 partition=getattr(pipeline.motion_transformer, '_experimental_parallel', None),
                 excludes='SAM, tracking, camera estimation, HaMeR, correction, export; resident generator only'))
     finally:
@@ -311,19 +312,15 @@ def main(argv):
     request_path = Path(argv[1])
     if argv[0] == 'verify':
         verify(load(request_path))
+    elif argv[0] == 'decode':
+        decoder_identity(load(request_path))
     elif argv[0] == 'generator':
         request = load(request_path)
-        with RssSampler(include_children=True) as memory:
-            if request['mode'] == 'tp2':
-                import torch.multiprocessing as mp
-                # FileStore avoids a fixed TCP port and is unique to this new experiment.
-                mp.spawn(generator_rank, args=(str(request_path), str(Path(request['output']) / 'nccl-store')), nprocs=2, join=True)
-            else:
-                generator_rank(0, request_path)
-        result_path = Path(request['output']) / 'result.json'
-        result = load(result_path)
-        result.update(whole_job_sampled_tree_rss_bytes=memory.peak,
-            tree_rss_note='50 ms samples across loading and rounds; sums process RSS, including shared pages, not physical RAM.')
-        atomic_json(result_path, result)
+        if request['mode'] == 'tp2':
+            import torch.multiprocessing as mp
+            # FileStore avoids a fixed TCP port and is unique to this new experiment.
+            mp.spawn(generator_rank, args=(str(request_path), str(Path(request['output']) / 'nccl-store')), nprocs=2, join=True)
+        else:
+            generator_rank(0, request_path)
     else:
         raise ValueError('Unknown experiment operation.')

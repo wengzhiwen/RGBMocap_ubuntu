@@ -15,6 +15,7 @@ import shutil
 import statistics
 import subprocess
 import sys
+import threading
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -69,13 +70,48 @@ def worker_command(profile, operation, *arguments):
     return [str(interpreter(ROOT, profile)), '-I', '-X', 'utf8', '-c', code, str(ROOT), profile, operation, *map(str, arguments)]
 
 
-def execute(command, log, env):
+class TreeMemorySampler:
+    """Run in the launcher, outside every timed model process and its GIL."""
+    def __init__(self, pid):
+        import psutil
+        self.process = psutil.Process(pid)
+        self.samples = []
+        self.cpu_seconds = 0.
+        self.done = threading.Event()
+        self.thread = threading.Thread(target=self.watch, daemon=True)
+        self.thread.start()
+
+    def watch(self):
+        import psutil
+        while not self.done.wait(.05):
+            started = time.thread_time()
+            try:
+                processes = [self.process, *self.process.children(recursive=True)]
+                values = {}
+                for process in processes:
+                    try: values[str(process.pid)] = process.memory_info().rss
+                    except (psutil.NoSuchProcess, psutil.AccessDenied): pass
+                self.samples.append(dict(monotonic=time.perf_counter(), rss=sum(values.values()), pids=values))
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                break
+            finally:
+                self.cpu_seconds += time.thread_time() - started
+
+    def close(self, path):
+        self.done.set()
+        self.thread.join()
+        write(path, dict(samples=self.samples, cpu_seconds=self.cpu_seconds, interval_seconds=.05,
+            note='External launcher samples; summed process RSS includes shared pages and is not physical RAM. Do not add GB10 CUDA allocations.'))
+
+
+def execute(command, log, env, sample_tree_path=None):
     from tools.ubuntu_cli import WorkerSupervisor, stop_group
     events = []
     with Path(log).open('x', encoding='utf-8') as stream:
         process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace', start_new_session=True)
         supervisor = WorkerSupervisor(process, env)
+        memory = TreeMemorySampler(process.pid) if sample_tree_path else None
         supervisor.thread.start()
         try:
             for line in process.stdout:
@@ -95,6 +131,8 @@ def execute(command, log, env):
             raise
         finally:
             supervisor.close()
+            if memory:
+                memory.close(sample_tree_path)
             process.stdout.close()
     return events
 
@@ -185,7 +223,7 @@ def generator(args):
         raise ValueError('TP2/PP2 requires the PRO 4000 single-GPU reference.pt.')
     if args.mode == 'single' and args.reference:
         raise ValueError('A single-GPU baseline creates its own reference; omit --reference.')
-    idle_devices(args.mode)
+    devices = idle_devices(args.mode)
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     request = dict(mode=args.mode, project=str(args.project.resolve()), output=str(output),
@@ -194,7 +232,23 @@ def generator(args):
         reference=str(Path(args.reference).resolve()) if args.reference else None)
     write(output / 'request.json', request)
     write(output / 'result.json', dict(schema=1, scope='warm-generator', mode=args.mode, passed=False))
-    execute(worker_command('flow', 'generator', output / 'request.json'), output / 'worker.log', environment())
+    env = environment()
+    env['CUDA_VISIBLE_DEVICES'] = ','.join(device[1] for device in devices)
+    execute(worker_command('flow', 'generator', output / 'request.json'), output / 'worker.log', env, output / 'tree-memory.json')
+    result = read(output / 'result.json')
+    memory = read(output / 'tree-memory.json')
+    samples = memory['samples']
+    for repetition in result['rounds']:
+        begin = min(rank['started_monotonic'] for rank in repetition['ranks'])
+        end = max(rank['ended_monotonic'] for rank in repetition['ranks'])
+        during = [sample for sample in samples if begin <= sample['monotonic'] <= end]
+        repetition['sampled_tree_rss_peak_bytes'] = max((sample['rss'] for sample in during), default=None)
+        for rank in repetition['ranks']:
+            rank['sampled_rss_peak_bytes'] = max((sample['pids'].get(str(rank['pid']), 0) for sample in during), default=None)
+    result.update(whole_job_sampled_tree_rss_bytes=max((sample['rss'] for sample in samples), default=None),
+        tree_rss_note=memory['note'], monitor_cpu_seconds=memory['cpu_seconds'],
+        timing_instrumentation='external-rss-v2; no sampling thread in timed workers')
+    write(output / 'result.json', result)
 
 
 def seed_canonical_project(template, target, frames):
@@ -206,8 +260,10 @@ def seed_canonical_project(template, target, frames):
         raise ValueError('Canonical template must be a matching 30 fps FlowHMR project.')
     if state.get('people_root') or state.get('person_frames') or state.get('start') != 0:
         raise ValueError('Use a standalone canonical video starting at zero.')
-    if abs(state['end'] - frames / 30) > 1e-5:
+    if abs(state['end'] - frames / 30) > 1e-6:
         raise ValueError('Canonical clip range does not match the requested frame count.')
+    if not (template / 'input.mp4').is_file():
+        raise ValueError('Canonical template is missing input.mp4.')
     if target.exists():
         raise ValueError('Canonical round target must be a new workspace.')
     create(target, Path(state['source']['path']), state['source'], 'flowhmr')
@@ -240,6 +296,7 @@ def pipeline(args):
     write(output / 'result.json', report)
     expected = None
     env = environment()
+    env['CUDA_VISIBLE_DEVICES'] = ','.join(device[1] for device in devices)
     try:
         for repetition in range(-args.warmups, args.rounds):
             idle_devices()
@@ -258,9 +315,15 @@ def pipeline(args):
             if any(e.get('cached') for e in completed if e.get('stage') in ('track', 'flow_camera', 'flow_features', 'flowhmr')):
                 raise ValueError('A fresh pipeline repetition unexpectedly reused inference outputs.')
             project = next(Path(e['project']) for e in events if isinstance(e, dict) and e.get('type') == 'prepared')
+            if args.template_project and project != folder / 'project' / 'flowhmr':
+                raise ValueError('Preparation unexpectedly changed the canonical project path.')
             write(folder / 'verification-request.json', dict(project=str(project), frames=args.frames, output=str(folder)))
             execute(worker_command('shared', 'verify', folder / 'verification-request.json'), folder / 'verify.log', env)
             checks = read(folder / 'checks.json')
+            if args.template_project:
+                from mocap.storage import sha256
+                if checks['input_sha256'] != sha256(args.template_project / 'input.mp4'):
+                    raise ValueError('Preparation re-encoded the canonical working video.')
             identity = {key: checks[key] for key in ('frames', 'decoded_sha256', 'input_sha256')}
             if expected is None: expected = identity
             if identity != expected:
@@ -285,7 +348,7 @@ def summary(args):
             print(f'{path}: FAILED / incomplete')
             continue
         seconds = [r['seconds'] for r in rounds]
-        print(f"{path}: {value['mode']}, n={len(seconds)}, median={statistics.median(seconds):.4f}s, range={min(seconds):.4f}–{max(seconds):.4f}s")
+        print(f"{path}: {value['scope']}/{value['mode']}, n={len(seconds)}, median={statistics.median(seconds):.4f}s, range={min(seconds):.4f}–{max(seconds):.4f}s")
 
 
 def parser():

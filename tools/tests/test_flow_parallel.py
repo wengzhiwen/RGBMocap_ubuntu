@@ -25,6 +25,15 @@ def model_and_inputs(start=False, skip=False):
         mask_mode='narrowband_v2m', attention_backend='query_batched', attention_query_chunk_size=4,
         narrowband_length=.1, narrowband_v2m_length=2., insert_start_token=start,
         with_long_skip_connection=skip).eval()
+    # Fresh AdaLN gates are zero by default: activate them so attention/MLP
+    # mistakes and padding changes actually influence the final prediction.
+    from flowhmr.network.mmdit.modulate_layers import ModulateDiT
+    generator = torch.Generator().manual_seed(77)
+    with torch.no_grad():
+        for module in model.modules():
+            if isinstance(module, ModulateDiT):
+                for value in (module.linear.weight, module.linear.bias):
+                    value.copy_(torch.randn(value.shape, generator=generator) * .05)
     mask = torch.ones(2, 9, dtype=torch.bool)
     context = {'feature': torch.randn(2, 9, 16), 'camera_R': torch.randn(2, 9, 9)}
     args = dict(x=torch.randn(2, 9, 12), ctxt_input=context, vtxt_input=torch.randn(2, 1, 8),
@@ -48,6 +57,7 @@ def _tp_child(rank, store, output):
             masked['ctxt_mask_temporal'][:, -3:] = False
             with torch.no_grad():
                 expected = [model(**batch).clone() for batch in (args, masked)]
+                assert not torch.equal(expected[0], expected[1]), 'Padding must affect this fixture.'
                 tensor_parallel(model, reduce_transport=transport)
                 assert model._experimental_parallel['parameters_local'] < model._experimental_parallel['parameters_before']
                 for batch, reference in zip((args, masked), expected):
@@ -56,6 +66,11 @@ def _tp_child(rank, store, output):
                     assert torch.allclose(actual, reference, rtol=2e-5, atol=3e-6), error
                     assert torch.isfinite(actual).all()
                     results.append(error)
+                # A wrong partial reduction must fail parity. Both ranks make
+                # the same mutation so this remains a valid collective order.
+                model.double_blocks[0].motion_out_proj.weight.mul_(.5)
+                wrong = model(**args)
+                assert not torch.allclose(wrong, expected[0], rtol=2e-5, atol=3e-6), 'Inactive sharded-layer control.'
         Path(output + str(rank) + '.json').write_text(json.dumps(results))
     finally:
         dist.destroy_process_group()
