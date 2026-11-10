@@ -504,8 +504,12 @@ class WorkerEntries(TempRoot):
         self.assertIn("'save_blend'", progress)
 
     def test_partial_names_follow_the_workers(self):
-        for name in ('mocap/export_copy.py', 'mocap/fbx_export.py'):
-            self.assertIn("temporary=target.with_name('.'+target.name+'.rgbmocap-'+request.stem+'.partial')", (ROOT / name).read_text(encoding='utf-8'), name)
+        # export_copy inlines the formula; fbx_export delegates to blend_support.partial (upstream 9617dae).
+        self.assertIn("temporary=target.with_name('.'+target.name+'.rgbmocap-'+request.stem+'.partial')",
+                      (ROOT / 'mocap/export_copy.py').read_text(encoding='utf-8'), 'mocap/export_copy.py')
+        self.assertIn("temporary=partial(target,request)",
+                      (ROOT / 'mocap/fbx_export.py').read_text(encoding='utf-8'), 'mocap/fbx_export.py')
+        self.assertIn("from .blend_support import", (ROOT / 'mocap/fbx_export.py').read_text(encoding='utf-8'), 'mocap/fbx_export.py')
         self.assertEqual(blend_support.partial(self.root / 'b', 'x/abc.json'), self.root / '.b.rgbmocap-abc.partial')
 
     def test_no_numerical_or_receipt_code_is_imported_by_the_cli(self):

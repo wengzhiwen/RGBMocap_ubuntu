@@ -7,12 +7,16 @@ This guide is for agents helping users operate or modify RGB MoCap. It describes
 Linux setup, launching and the command-line interface are in [UBUNTU.md](UBUNTU.md); the rest of this section describes Windows.
 
 - Windows 64-bit, compatible NVIDIA GPU/driver and OpenGL 4.3 are required for the documented inference workflow. Other systems and GPUs were not comprehensively verified; see [validation](VALIDATION.md).
-- In a writable checkout, run `install.cmd` once. It sets up separate pinned profiles for ExMR, FlowHMR and GVHMR and their supported add-ons, PEAR support over the shared runtime, Blender 4.5, FFmpeg and the prebuilt native motion-correction module. It does not install only the selected model's runtime or obtain AI weights/body data. Downloading and disk space are required. Models are obtained separately; optional MAMMA uses Setup_MAMMA.cmd and PromptHMR uses Setup_PromptHMR.cmd.
+- In a writable checkout, run `install.cmd` once. It sets up separate pinned profiles for ExMR, FlowHMR and GVHMR and their supported add-ons, PEAR support over the shared runtime, Blender 4.5, FFmpeg and the prebuilt native motion-correction module. It does not install only the selected model's runtime or obtain AI weights/body data. Downloading and disk space are required. Models are obtained separately. Optional MAMMA, PromptHMR and GEM-X have separate setup commands.
 - Run `RGBMoCap.cmd`. Keep its command window open; launch errors, processing messages and app Console output are also sent there, but long messages can be truncated and a saturated output queue can drop messages. Within the GUI, **Help > Check System** checks the system.
 - Base worker commands use explicit `-X utf8`, including isolated `-I` launches. Isolated mode ignores `PYTHONIOENCODING`/`PYTHONUTF8` from the parent environment. Any redirected/discarded text log stream must also specify UTF-8. Keep byte-oriented PEAR IPC unchanged.
 - Close the app before `update.cmd`. The updater requires a clean tracked worktree and the `main` branch, uses `git pull --ff-only`, then verifies/repairs runtime configuration. It refuses tracked local edits. A plain `git pull` does not perform runtime repair; use `install.cmd` after dependency changes when needed. Do not discard local edits or force an update.
+- `update.cmd` buffers its final command block before Git can replace it. Reporting/pause belongs to `tools/git_update.py`; failures preserve the subprocess status (ordinary exceptions use 1, Python-intercepted cancellation uses 130). Keep delayed expansion off for paths/arguments. The final `CALL` expands only a numeric exit status after clearing an environment shadow; never reparse paths or arguments with `CALL`. Already-running older launchers remain vulnerable during their first transition. From an open CMD in the app folder, `runtime\python.exe -I -X utf8 -B tools\git_update.py` bypasses the old wrapper. A stray command error after reported installation completion calls for rerunning the updated launcher, not deleting setup markers or models. See [update recovery](USER_GUIDE.md#installation-verification-and-repair) and the preceding transition note. Forced console termination/deletion of the running launcher is outside this guarantee.
 - For setup failure, read the message, check connectivity and free space, then retry `install.cmd`. Preserve models, projects and `.setup` state. Do not repeatedly reinstall or redownload models without evidence.
-- Base installation currently estimates at least 32.4 GiB free before models; ExMR/FlowHMR/GVHMR and add-ons were previously measured around 29 GiB of weights. Optional MAMMA and PromptHMR add separate runtimes and model files; see [MAMMA](MAMMA.md) and [PromptHMR](models/PROMPTHMR.md). The five offline model/runtime sets total about **63.22 GiB (67.9 GB)** before optional PromptHMR moving-camera support, excluding caches, projects, downloads and compiler tools, counting shared files once. Camera support adds about **1.57 GiB** (18.6 MiB modules and 1.55 GiB weights). See the [installed-size table](USER_GUIDE.md#installed-size); installed size and temporary setup headroom are different. Measurements are not guarantees.
+- Base completion and optional PEAR/camera-alignment readiness are separate. A post-commit support failure reports completion with warnings; it must not recreate the global base pending marker. Inspect `.setup/git-components.json` and the actual capability configuration. Retry with `install.cmd`; camera-alignment preparation is independent of PEAR and also serves MAMMA automatic gravity. Mandatory base failures and unresolved promotion journals remain blocking. Never delete a pending marker blindly.
+- Recent full runtime checks are reused for up to seven days with matching group/verifier identities and an unchanged bounded file inventory, including additions/removals. Reuse does not refresh the full-check date. `install.cmd --verify-all` or `update.cmd --verify-all` forces the existing RECORD hashes/import checks. Missing/expired metadata, dependency changes and detected file changes trigger full checks for affected groups/dependents. Metadata is a change-detection heuristic, not an authenticity guarantee. Do not mark a runtime verified without an actual successful check.
+- `tools/pinned_download.py` supplies bounded HTTPS retries/resume for support archives. Keep certificate verification, HTTPS redirects, exact size and SHA-256, validated Content-Range, cancellation propagation and finite attempt/time limits. Ordinary base wheel downloads and optional package fetching retain their own paths; do not claim this replaces every network call. Source contracts are frozen/rechecked during base installation. A failed Git pull must preserve any pre-existing incomplete-install marker.
+- Base installation currently estimates at least 32.4 GiB free before models; ExMR/FlowHMR/GVHMR and add-ons were previously measured around 29 GiB of weights. Optional MAMMA, PromptHMR and GEM-X add separate runtimes and model files. With GEM-X CUDA sharing, the six offline model/runtime sets total about **72.46 GiB (77.8 GB)** before optional PromptHMR moving-camera support, excluding caches, projects, downloads and compiler tools, counting shared files once. Camera support adds about **1.57 GiB** (18.6 MiB modules and 1.55 GiB weights). See the [installed-size table](USER_GUIDE.md#installed-size); installed size and temporary setup headroom are different. Measurements are not guarantees.
 
 Multi-person reconstruction groups supported ExMR, FlowHMR and GVHMR phases
 into sequential, bounded worker requests. `mocap/queue_groups.py` builds the queue;
@@ -79,9 +83,10 @@ input. Do not replace the YAML or invalidate motion to add this metadata.
 | GVHMR | Lower overall quality in those tests but sometimes better for unusual poses such as backflips. SMPL-X. | Fingers via optional HandFlow. HTD refines body motion; FootMR refines ankles. Both are separate from contact correction. |
 | MAMMA | Optional multi-view SMPL-X capture from two or more synchronized fixed cameras, without a fixed camera-count maximum. Practical capacity depends on RAM/VRAM. Not part of the single-video quality ranking. | Fingers included; separate setup and locked-head body assets. VGGT-Omega + GeoCalib or compatible manual calibration. |
 | PromptHMR | Multiple people reconstructed jointly from one video; can improve relative placement and interactions. Overall motion quality was lower than ExMR in our subjective tests. Fixed/moving-camera Windows paths, up to eight people; placement can still be wrong. | No finger tracking; fixed neutral fingers. Setup_PromptHMR.cmd; People defaults to 2, Interaction Prompt on. |
+| GEM-X | One fixed-camera video and one automatic primary person. Fast processing with relatively low overall motion quality in the project tests. Native77 SOMA at 30 fps for trims up to 60 seconds. | Body and fingers, foot and hand correction, native FBX/BVH and Blender export, and character retarget. [Setup_GEMX.cmd](models/GEMX.md#setup), then Model Manager. |
 | PEAR | Live single-person bone preview from a webcam or the video timeline; transient, with lightweight live foot lock and no recording/export or offline correction. | Fingers included; Start/Stop, fixed lengths/Reset Bones, One Euro filter, Rotation and default-on World Position. Shared support is installed by install.cmd. |
 
-Start with the [model guide index](models/README.md), then [ExMR](models/EXMR.md), [FlowHMR](models/FLOWHMR.md), [GVHMR](models/GVHMR.md), [MAMMA](MAMMA.md) or [PromptHMR](models/PROMPTHMR.md) for exact setup and controls. The [user guide](USER_GUIDE.md#recorded-processing-time-and-vram) includes observed timings, conditions and VRAM; these are historical measurements, not minimum specifications. FlowHMR has a 5,000-frame per-take limit and available memory may require less. MAMMA retains its 4–1,800-frame common trim and eight-person limits; there is no fixed camera-count maximum. Four-column thumbnails are a layout, not admission control. Do not change numerical precision, temporal context or model settings merely to improve a benchmark.
+Start with the [model guide index](models/README.md), then [ExMR](models/EXMR.md), [FlowHMR](models/FLOWHMR.md), [GVHMR](models/GVHMR.md), [MAMMA](MAMMA.md), [PromptHMR](models/PROMPTHMR.md) or [GEM-X](models/GEMX.md) for exact setup and controls. The [user guide](USER_GUIDE.md#recorded-processing-time-and-vram) includes observed timings, conditions and VRAM; these are historical measurements, not minimum specifications. FlowHMR has a 5,000-frame per-take limit and available memory may require less. MAMMA retains its 4–1,800-frame common trim and eight-person limits; there is no fixed camera-count maximum. Four-column thumbnails are a layout, not admission control. Do not change numerical precision, temporal context or model settings merely to improve a benchmark.
 
 Use **Model Manager** for the selected model and add-ons. Automatic download may fail, especially on Google Drive. Gated models require the user to register, accept upstream terms and obtain files; use **Manual Download...** and **Import...**. Do not handle provider passwords or redistribute licensed weights. Imports validate files; several model receipts tie validity to file size, timestamp and expected hash. If a copied file is not marked ready, import it again rather than assuming it is missing or editing receipts.
 
@@ -92,7 +97,32 @@ Use **Model Manager** for the selected model and add-ons. Automatic download may
 | `install.cmd` | Base GUI, ExMR/FlowHMR/GVHMR and supported add-ons, PEAR shared support, Blender, FFmpeg, native correction | See the base installation guide; no PromptHMR/MAMMA native build |
 | `Setup_MAMMA.cmd` | Optional independent MAMMA runtime | VS 2022 C++ tools/Windows SDK, CUDA Toolkit 12.8, provider license review |
 | `Setup_PromptHMR.cmd` | Optional independent PromptHMR runtime | Same build tools, separate provider license review; MAMMA/SDF not required |
+| `Setup_GEMX.cmd` | Optional GEM-X Windows runtime | Reuses the pinned ExMR CPython and compatible CUDA DLLs, keeps its own inference packages, verifies CUDA. No compiler required. |
+| `Setup_SAM31.cmd` | Optional SAM 3.1 Find person tracker for ExMR, FlowHMR and GVHMR on Windows | Base ExMR profile, Git, internet, upstream terms review and NVIDIA CUDA with native bfloat16. Uses pinned wheels and a separate overlay. |
 | `update.cmd` | Source update and base runtime verification | Close the app and preserve tracked edits; it does not install the optional runtimes |
+
+### GEM-X support
+
+Follow the [GEM-X model guide](models/GEMX.md). Use the app's pinned setup
+and Model Manager. Review the upstream terms before downloading. Keep
+`runtime_exmr/` and `runtime_gemx/` in the same installation. A new setup
+checks the wheel hashes and tests CUDA before registering a generation.
+`install.cmd` and `update.cmd` keep GEM-X optional.
+
+`mocap/gemx_pipeline.py` publishes a native generation only after the clip,
+77 joint transforms, shaped rig and evaluated SOMA surface are complete.
+`mocap/gemx_result.py` loads the numeric cache in the GUI without a Torch
+dependency on GEM-X. Use native joint names for retargeting and preserve
+the original target rest skeleton. `gemx_correct.py` derives support geometry
+from native SOMA and uses `gemx_contact_solver.py` in the base CPU runtime.
+The GEM-X runtime rebakes the corrected bones and surface and publishes a
+separate generation. Keep GEM-X out of SMPL preview preparation.
+`gemx_skeleton_export.py` sends the selected native result to the FBX and BVH
+workers, using the shaped SOMA bind and Generic / Blender BVH profile.
+Its portable Blender export
+uses relative paths for the exact surface cache and input video. Test
+project reopening and both native and character export when changing this
+adapter.
 
 Optional Runtime Setup buttons display instructions/copy a command; they do not
 install inside the running app. After updates, rerun the relevant optional setup
@@ -110,6 +140,41 @@ fix; do not extend that exception to numerical/weight changes. No optional-runti
 rebuild is required. See [supporting downloads](models/PROMPTHMR.md#shared-supporting-model-download-cache).
 
 Model files are in `<installation>/models/` by default. To reuse a legitimate installation, close both apps, copy the complete models folder and its receipt/license files beside `RGBMoCap.cmd`, and check readiness in Model Manager. Do not copy old `runtime*` folders. SMPL Neutral is required by PromptHMR, although it is not required for ExMR/FlowHMR/GVHMR. Standard SMPL-X Neutral is shared by ExMR/GVHMR/PromptHMR; MAMMA uses its separate locked-head bodies. Exact requirements are defined by `mocap/models.py` and the chosen stages, not by guessed filenames.
+
+### SAM 3.1 person discovery
+
+1. Verify the base installation and ExMR runtime. Review the linked upstream
+   terms with the user. Close RGB MoCap, then run `Setup_SAM31.cmd`. Setup
+   stages the pinned Meta source and SHA-256-pinned wheels in a separate
+   `runtime_sam31/` overlay and tests native CUDA bfloat16 attention before
+   activation. It uses the base ExMR Python and Torch. Keep the ExMR pins and
+   the locked base runtime registry intact.
+2. In the app, choose ExMR, FlowHMR or GVHMR, then **SAM 3.1** next to
+   **Find person**. Open **Model Manager** and use **Auto Download** on the
+   optional SAM 3.1 row. For a manual import use the exact public Comfy-Org
+   FP16 safetensors file in the [tracker guide](models/SAM31.md#setup).
+   **Download All** skips this optional checkpoint.
+3. Test a short video with `person` and no markers, then seek to a clear frame
+   in the trim, mark a person and click **Track**. Markers select candidates
+   found by text in that frame. Check the desired People rows and run
+   **Reconstruct 3D**. Check **Default** separately when troubleshooting
+   detector behavior. A setup error and a missing checkpoint require different fixes.
+
+SAM 3.1 uses more VRAM than Default (YOLOv8x + OSNet). Treat the
+[measured VRAM peaks](models/SAM31.md#vram-use) as observations from specific
+clips. Exact overhead relative to Default remains unmeasured on matching
+inputs. Find person and 3D reconstruction run in separate stages.
+
+`mocap/sam31_discovery.py` uses the canonical 30 fps working video, the
+shared People publishing code and a discovery identity covering the media,
+tracker implementation, checkpoint, prompt and relevant frame/markers. Preserve
+the previous People result if a prompt or marker fails. Retain source trim
+validation and the nearest valid working frame, including the final frame of a
+high-FPS source. Keep the separate worker entry point and Resource Safety
+controls. SAM 3.1 here applies to offline discovery for the three listed models.
+MAMMA and PromptHMR keep their reconstruction trackers, GEM-X keeps its primary
+person detector, and PEAR keeps its live detector.
+See the [recorded checks](VALIDATION.md#sam-31-person-discovery-2026-11-10).
 
 ## Standard GUI workflow
 
@@ -216,7 +281,7 @@ corrected native actors feed the usual contact editing and FBX paths. See
 assumptions and adapter limits. The optional setup downloads official restricted source and builds native
 modules locally; Visual Studio 2022 C++ Build Tools and CUDA Toolkit 12.8 are
 prerequisites. Model Manager shows its runtime readiness and setup instructions.
-Do not claim clean-Windows or other-GPU validation or SAM 3.1 app support. Keep restricted upstream code, weights and derived bodies private.
+Do not claim clean-Windows or other-GPU validation for MAMMA. MAMMA uses SAM 2.1 masks. Keep restricted upstream code, weights and derived bodies private.
 
 For prerequisite checks, automatic setup, independent SAM 2/SDF builds, kernel
 verification, registration and rollback, use the
@@ -275,6 +340,14 @@ FFmpeg. Keep the window/viewport geometry fixed during capture, reject changing
 input generations and atomically replace only a finished destination. Cancel
 and window close must reap the encoder before destroying its QThread. Keep test
 projects, input media and output videos outside the public source package.
+
+### Blender bone streaming
+
+See the [installation steps and controls](USER_GUIDE.md#stream-bones-to-blender). Install `blender_addon/rgbmocap_bone_stream.zip` from Blender's **Add-ons > Install from Disk** menu. The ZIP contains the adjacent Python source as `rgbmocap_bone_stream/__init__.py` and the MIT license. Keep the packaged source and the hash in `installer/source-resources.json` synchronized when the add-on changes.
+
+`mocap/stream_ui.py` samples ready frames for checked offline people, independently of People visibility. Multi-person streams use each take's shared scene transform. Selecting PEAR stops the stream. `mocap/bone_stream.py` sends Blender Z-up rest and pose matrices on a background thread and keeps only the latest live snapshot. The listener binds to `127.0.0.1:49168`. Selection metadata is requested by compatible receivers.
+
+`blender_addon/rgbmocap_bone_stream.py` applies poses on Blender's main thread, within the scene and view layer chosen at Connect. The stream collection stores references to its original armatures, keyed by person and rest skeleton. Keep those references when reusing rigs. Clean checks selection and scene references again at confirmation and skips armatures used by other objects. Bake reads the recorded takes on the sender thread, writes a separate Action in Blender, and detaches only after the action is assigned successfully. The app unchecks that person after Blender acknowledges completion.
 
 ### Saved camera display and source export implementation
 
@@ -354,10 +427,35 @@ verified 3ds Max behavior from the Blender/numerical checks alone.
 changing AI worker/cache fingerprints. Keep selected-result, pending contact and
 shared-scene guards, generation checks and atomic destination replacement in
 `fbx_export.py`/`export_copy.py`. Unchecked FBX output must remain identical.
+**FBX Compatibility (Maya)** is default-off and applies to source FBX, including
+GEM-X Native77. The worker prepares the selected take with the existing export
+options, then runs `fbx_compatibility_scene.py` in the included Blender runtime.
+Reuse the existing rest-pose sampler so the final FBX keeps the original bind
+pose and writes animation keys to bones. Verify the source generation again
+before publishing the converted file. The worker owns and cleans its staging
+folder using the Blender export marker.
 The optional leading pose is animation, not a replacement bind pose; validate
 both original-frame and fractional-frame suffix poses in Blender after changes.
 
 ### Portable Blender export implementation
+
+Source FBX/BVH requests accept default-off `place_at_origin` and `symmetric_rest`.
+`gui.py` attaches a stable `origin_group` for each person, distinct from display
+names. Within an export batch, each actor's first exported take determines one
+constant XZ offset; later takes retain their relative travel and Y is untouched.
+This intentionally discards placement between different people.
+
+`export_options.py` constructs mirrored averaged-length rest offsets and a
+vertical central chain. BVH changes exported hierarchy offsets; a rest-only
+Generic export preserves MOTION bytes. FBX uses the same canonical reference
+geometry with new proper display/rest bases and corresponding terminal markers.
+Validate input rigid offsets against the original committed bind, not the new
+lengths. Do not materialize a full new animation or rerun inference/contacts.
+Changed proportions intentionally change animated endpoints. Both options off
+retain the existing bind/output. `blend_export.py` explicitly clears both flags
+before its nested FBX export; MAMMA whole-scene requests never propagate them.
+Keep source results/receipts immutable, stream bounded BVH blocks, and validate
+ordinary Blender imports, profiles, T-pose combinations and independent actors.
 
 `blend_export_ui.py` constructs requests and selects new, collision-free bundle
 folders. `blend_export_worker.py` routes `save_blend`/`save_blend_scene` through

@@ -246,15 +246,15 @@ Saved work stays valid because receipts still see baseline code identities:
 
 ## Upstream sync
 
-**Baseline:** `ef05127a0dbddb3f3ac672a0722dddeae42ea651` (upstream `main` at the time of this port).
+**Baseline:** `1b0384367fc6b63932c82f1c9c5cb4243a91de2e` (upstream `main` merged on 2026-11-10; original port baseline was `ef05127a0dbddb3f3ac672a0722dddeae42ea651`).
 
 Keep the Linux layer small and additive, and merge rather than rebase so the identity reasoning stays reviewable against each upstream version:
 
 ```bash
 git remote add upstream https://github.com/toyxyz/toyxyz_RGBMocap.git # once, if absent
 git fetch upstream
-git log --oneline ef05127a0dbddb3f3ac672a0722dddeae42ea651..upstream/main
-git diff --stat ef05127a0dbddb3f3ac672a0722dddeae42ea651..upstream/main -- mocap/runtime_registry.py mocap/worker.py mocap/exmr_backend.py mocap/flow_hamer.py mocap/flow_backend.py mocap/video.py mocap/retarget/runtime.py installer/runtime-lock.json requirements/
+git log --oneline 1b0384367fc6b63932c82f1c9c5cb4243a91de2e..upstream/main
+git diff --stat 1b0384367fc6b63932c82f1c9c5cb4243a91de2e..upstream/main -- mocap/runtime_registry.py mocap/worker.py mocap/exmr_backend.py mocap/flow_hamer.py mocap/flow_backend.py mocap/video.py mocap/retarget/runtime.py installer/runtime-lock.json requirements/
 git switch -c codex/sync-<date> && git merge upstream/main
 ```
 
