@@ -91,8 +91,10 @@ Models are obtained separately, as on Windows: use **Model Manager**, or the `im
 ## Run the GUI
 
 ```bash
-./RGBMoCap.sh
+./rgbmocap-gui.sh
 ```
+
+The GUI entry point is `rgbmocap-gui.sh`; `rgbmocap.sh` remains the CLI. This replaces the former `RGBMoCap.sh` name, which collided with `rgbmocap.sh` on case-insensitive filesystems. Update any custom shortcuts to the new GUI entry point.
 
 Keep the terminal open; it mirrors processing messages, as the Windows command window does. The launcher adds `tools/bin` and `.runtime/lib` when they exist, then validates `.venv` instead of reading the Windows managed-install state.
 
