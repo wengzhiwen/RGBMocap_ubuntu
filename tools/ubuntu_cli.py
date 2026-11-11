@@ -772,7 +772,7 @@ def add_common(parser):
 
 
 def parser():
-    root = argparse.ArgumentParser(prog='rgbmocap.sh', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    root = argparse.ArgumentParser(prog='rgbmocap-cli.sh', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = root.add_subparsers(dest='command', required=True, parser_class=FlowParser)
     doctor = commands.add_parser('doctor', help='Check environments, tools, native modules and models.')
     add_common(doctor)

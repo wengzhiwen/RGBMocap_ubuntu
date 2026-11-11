@@ -37,7 +37,7 @@ successfully on Python 3.10 but consume a `None` reference per ordinary void
 painting call, eventually aborting the GUI. The amd64/Windows 6.8.3 pins and
 numerical environments remain unchanged. Existing ARM64 installs should run
 `python3 tools/setup_ubuntu.py --profiles shared`, with the GUI closed.
-Setup and `./rgbmocap.sh doctor` now exercise these bindings using the headless
+Setup and `./rgbmocap-cli.sh doctor` now exercise these bindings using the headless
 `tools/check_qt_runtime.py` probe rather than relying only on import success.
 See the [crash follow-up and 60-second GB10 playback check](validation/gb10-gui-crash-2026-11-07.md).
 
@@ -68,7 +68,7 @@ python3 tools/setup_ubuntu.py --plan                  # print exact pins; add --
 python3 tools/setup_ubuntu.py                         # .venv, .venv-flow, .venv-exmr
 python3 tools/setup_ubuntu.py --stage-assets          # hash-checked auxiliary files, no weights
 python3 tools/setup_ubuntu.py --profiles shared --build-correction   # native correction module
-./rgbmocap.sh doctor
+./rgbmocap-cli.sh doctor
 ```
 
 | Profile | Environment | Python | Pins |
@@ -84,7 +84,7 @@ python3 tools/setup_ubuntu.py --profiles shared --build-correction   # native co
 - Linux CUDA requirements declared by the Torch wheel, such as `nvidia-*` and `triton`, are added and recorded in `<venv>/rgbmocap-linux.json`. Profiles using `iopath` also receive `portalocker` from the existing pinned ExMR profile, satisfying its Linux file-lock dependency.
 - Python and the uv cache stay in `.runtime/python` and `.cache/uv`. Identical wheels are hardlinked from that cache, so repeated Torch files are not stored once per environment when the cache and venvs share a filesystem.
 - Each environment must pass its activation check before setup reports it ready. If uv cannot provide an exact Python, setup stops unless you pass `--python-patch-fallback`; the accepted same-minor patch is then recorded and allowed by activation.
-- Setup validates versions and import locations only, and it records `cuda_verified: false`. Importing Torch does not show that CUDA works: run `./rgbmocap.sh doctor --gpu`, then a real clip.
+- Setup validates versions and import locations only, and it records `cuda_verified: false`. Importing Torch does not show that CUDA works: run `./rgbmocap-cli.sh doctor --gpu`, then a real clip.
 
 Models are obtained separately, as on Windows: use **Model Manager**, or the `import_model` stage below. Do not copy runtime folders from a Windows install. Model receipts record file size and timestamp, so a copied file that shows as not ready should be imported again rather than having its receipt edited.
 
@@ -94,7 +94,7 @@ Models are obtained separately, as on Windows: use **Model Manager**, or the `im
 ./rgbmocap-gui.sh
 ```
 
-The GUI entry point is `rgbmocap-gui.sh`; `rgbmocap.sh` remains the CLI. This replaces the former `RGBMoCap.sh` name, which collided with `rgbmocap.sh` on case-insensitive filesystems. Update any custom shortcuts to the new GUI entry point.
+The GUI entry point is `rgbmocap-gui.sh`; the CLI entry point is `rgbmocap-cli.sh`. These replace the former `RGBMoCap.sh` (GUI) and `rgbmocap.sh` (CLI) names, which collided on case-insensitive filesystems. Update custom shortcuts and scripts to the new entry points.
 
 Keep the terminal open; it mirrors processing messages, as the Windows command window does. The launcher adds `tools/bin` and `.runtime/lib` when they exist, then validates `.venv` instead of reading the Windows managed-install state.
 
@@ -103,17 +103,17 @@ Keep the terminal open; it mirrors processing messages, as the Windows command w
 The CLI runs the same workers with the same project files and receipts, so the GUI can open its projects and completed stages are reused either way.
 
 ```bash
-./rgbmocap.sh doctor                # readiness; add --gpu for a real CUDA operation in each environment
-./rgbmocap.sh stages                # pipelines and the environment each stage uses
-./rgbmocap.sh flow --video clip.mp4 --hamer --dry-run
-./rgbmocap.sh flow --video clip.mp4 --start 0 --end 5 --hamer
-./rgbmocap.sh flow --video clip.mp4 --camera-interval -1 --correct
-./rgbmocap.sh export --project <reported project> --kind initial --output motion.fbx
-./rgbmocap.sh export --project <reported project> --kind corrected_initial --output motion.bvh
-./rgbmocap.sh export --project <reported project> --output biped.bvh --bvh-profile biped --prepend-tpose
-./rgbmocap.sh export --project <reported project> --output bundle.blend --animate-camera
-./rgbmocap.sh stage correct --project <reported project> --result corrected_initial
-./rgbmocap.sh stage import_model --model hand_hamer --video /path/to/downloaded.file
+./rgbmocap-cli.sh doctor                # readiness; add --gpu for a real CUDA operation in each environment
+./rgbmocap-cli.sh stages                # pipelines and the environment each stage uses
+./rgbmocap-cli.sh flow --video clip.mp4 --hamer --dry-run
+./rgbmocap-cli.sh flow --video clip.mp4 --start 0 --end 5 --hamer
+./rgbmocap-cli.sh flow --video clip.mp4 --camera-interval -1 --correct
+./rgbmocap-cli.sh export --project <reported project> --kind initial --output motion.fbx
+./rgbmocap-cli.sh export --project <reported project> --kind corrected_initial --output motion.bvh
+./rgbmocap-cli.sh export --project <reported project> --output biped.bvh --bvh-profile biped --prepend-tpose
+./rgbmocap-cli.sh export --project <reported project> --output bundle.blend --animate-camera
+./rgbmocap-cli.sh stage correct --project <reported project> --result corrected_initial
+./rgbmocap-cli.sh stage import_model --model hand_hamer --video /path/to/downloaded.file
 ```
 
 - `flow` runs `prepare`, `track`, `flow_camera`, the joined `flow_batch` (`flow_features` + `flowhmr`), optional `correct`, then `flow_export`. It finishes by printing the model project path that `export` needs.
@@ -124,8 +124,8 @@ The CLI runs the same workers with the same project files and receipts, so the G
 ### Reuse a project's processing settings
 
 ```bash
-./rgbmocap.sh flow --video new_clip.mp4 --template /path/to/old/project.json --dry-run
-./rgbmocap.sh flow --video new_clip.mp4 --template /path/to/old/project.json --project /path/to/new_project
+./rgbmocap-cli.sh flow --video new_clip.mp4 --template /path/to/old/project.json --dry-run
+./rgbmocap-cli.sh flow --video new_clip.mp4 --template /path/to/old/project.json --project /path/to/new_project
 ```
 
 `--template` accepts a FlowHMR model manifest or a version-2 workspace's
@@ -273,6 +273,6 @@ After each merge:
 4. **New Windows-only code.** Search upstream changes for `creationflags=0x`, `.exe`, `Scripts/python`, `peak_wset`, `num_handles` and `win32`. Prefer an `os.name` branch in unhashed files. Check whether a file is hashed before editing it (`code_hash`, `sha256(`, `file_stat(`, `inspect.getsource`).
 5. **Pins.** The readable pins must still match the lock; a test checks this. New Windows-only packages go in `WINDOWS_ONLY`. If upstream changes Torch pins, review `installer/linux-aarch64.json` and rerun the aarch64 wheel check: `python3 tools/setup_ubuntu.py --plan --machine aarch64`, then `uv pip install --dry-run --no-deps --only-binary :all:` for its pins.
 6. **Test constants.** Update `BASE_SHA`, the digests and the identity tables in `tools/tests/test_ubuntu_portability.py` to the new upstream values, and update the baseline above.
-7. **Verify.** Run `python3 -m unittest discover -s tools/tests -v` and `python3 tools/check_source.py`, then `./rgbmocap.sh doctor --gpu` and a real FlowHMR + HaMeR clip. Confirm that re-running it reports cached stages, and only then merge the sync branch.
+7. **Verify.** Run `python3 -m unittest discover -s tools/tests -v` and `python3 tools/check_source.py`, then `./rgbmocap-cli.sh doctor --gpu` and a real FlowHMR + HaMeR clip. Confirm that re-running it reports cached stages, and only then merge the sync branch.
 
 Tests live in `tools/tests/` because the root `tests/` folder is ignored by Git.
