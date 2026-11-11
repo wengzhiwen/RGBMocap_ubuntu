@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Command-line interface over the same workers as the GUI. See: ./rgbmocap.sh --help
+# Command-line interface over the same workers as the GUI. See: ./rgbmocap-cli.sh --help
 set -u
 root="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 python="$root/.venv/bin/python"

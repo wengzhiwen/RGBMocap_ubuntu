@@ -285,7 +285,7 @@ def main(argv=None):
     if args.build_correction:
         build_correction()
     print('Environments installed; versions and import paths were validated, but CUDA has not been run.\n'
-          'Import model files through Model Manager, then verify with: ./rgbmocap.sh doctor --gpu')
+          'Import model files through Model Manager, then verify with: ./rgbmocap-cli.sh doctor --gpu')
     return 0
 
 

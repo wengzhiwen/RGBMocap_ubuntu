@@ -534,7 +534,7 @@ class Launchers(TempRoot):
         return target
 
     def test_shell_syntax_and_executable_bit(self):
-        for name in ('rgbmocap-gui.sh', 'rgbmocap.sh'):
+        for name in ('rgbmocap-gui.sh', 'rgbmocap-cli.sh'):
             subprocess.run(['bash', '-n', str(ROOT / name)], check=True)
             self.assertTrue(os.access(ROOT / name, os.X_OK), name)
 
@@ -555,7 +555,7 @@ class Launchers(TempRoot):
         self.assertEqual(lines[2:], ['-I', '-X', 'utf8', '-u', '-B', str(self.root / 'launch_linux.py'), '--video', 'a b.mp4'])
 
     def test_cli_launcher_runs_before_setup(self):
-        done = subprocess.run([str(ROOT / 'rgbmocap.sh'), 'stages', '--json'], capture_output=True, text=True, check=True)
+        done = subprocess.run([str(ROOT / 'rgbmocap-cli.sh'), 'stages', '--json'], capture_output=True, text=True, check=True)
         self.assertIn('flow_features', json.loads(done.stdout)['stages'])
 
 
@@ -1245,7 +1245,7 @@ class Documentation(unittest.TestCase):
     def test_upstream_baseline_is_recorded(self):
         text = (ROOT / 'docs/UBUNTU.md').read_text(encoding='utf-8')
         self.assertIn(BASE_SHA, text)
-        for command in ('tools/setup_ubuntu.py', 'rgbmocap.sh doctor', 'rgbmocap-gui.sh', 'PLATFORM_ONLY'):
+        for command in ('tools/setup_ubuntu.py', 'rgbmocap-cli.sh doctor', 'rgbmocap-gui.sh', 'PLATFORM_ONLY'):
             self.assertIn(command, text)
 
 

@@ -30,7 +30,7 @@ sudo apt install ffmpeg libglu1-mesa libegl1 libgl1 libopengl0 libxcb-cursor0 cm
 
 python3 tools/setup_ubuntu.py --plan
 python3 tools/setup_ubuntu.py --stage-assets --build-correction
-./rgbmocap.sh doctor --gpu
+./rgbmocap-cli.sh doctor --gpu
 ./rgbmocap-gui.sh
 ```
 
@@ -41,26 +41,26 @@ python3 tools/setup_ubuntu.py --stage-assets --build-correction
 
 ```bash
 # 预览执行计划
-./rgbmocap.sh flow --video clip.mp4 --hamer --correct --dry-run
+./rgbmocap-cli.sh flow --video clip.mp4 --hamer --correct --dry-run
 
 # 单人重建、手指增强与动作修正
-./rgbmocap.sh flow --video clip.mp4 --hamer --correct
+./rgbmocap-cli.sh flow --video clip.mp4 --hamer --correct
 
 # 使用上一步输出的模型项目路径
-./rgbmocap.sh export --project /path/to/model_project --kind corrected_initial --output motion.fbx
-./rgbmocap.sh export --project /path/to/model_project --kind corrected_initial --output motion.bvh
+./rgbmocap-cli.sh export --project /path/to/model_project --kind corrected_initial --output motion.fbx
+./rgbmocap-cli.sh export --project /path/to/model_project --kind corrected_initial --output motion.bvh
 ```
 
 `flow` 当前自动跟踪一人；多人选择仍使用 GUI。`export` 导出已准备好的结果。
 Blender 打包需要 Blender 4.5，源动作 FBX / BVH 导出不需要 Blender。
-更多命令见 [CLI 文档](docs/UBUNTU.md#command-line)或 `./rgbmocap.sh flow --help`。
+更多命令见 [CLI 文档](docs/UBUNTU.md#command-line)或 `./rgbmocap-cli.sh flow --help`。
 
 ## 新增：用 project.json 复用处理配置
 
 先在 GUI 项目中调好 FlowHMR 和动作修正设置，再将其作为新视频的模板：
 
 ```bash
-./rgbmocap.sh flow \
+./rgbmocap-cli.sh flow \
   --video new_clip.mp4 \
   --template /path/to/old/project.json \
   --project /path/to/new_project \
