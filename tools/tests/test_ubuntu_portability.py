@@ -534,17 +534,17 @@ class Launchers(TempRoot):
         return target
 
     def test_shell_syntax_and_executable_bit(self):
-        for name in ('rgbmocap-gui.sh', 'rgbmocap-cli.sh'):
+        for name in ('RGBMoCap.sh', 'rgbmocap-gui.sh', 'rgbmocap-cli.sh'):
             subprocess.run(['bash', '-n', str(ROOT / name)], check=True)
             self.assertTrue(os.access(ROOT / name, os.X_OK), name)
 
     def test_gui_launcher_requires_setup(self):
-        done = subprocess.run([str(self.copy('rgbmocap-gui.sh'))], capture_output=True, text=True)
+        done = subprocess.run([str(self.copy('RGBMoCap.sh'))], capture_output=True, text=True)
         self.assertEqual(done.returncode, 1)
         self.assertIn('setup_ubuntu.py', done.stderr)
 
     def test_gui_launcher_environment_and_interpreter_flags(self):
-        launcher = self.copy('rgbmocap-gui.sh')
+        launcher = self.copy('RGBMoCap.sh')
         (self.root / 'tools/bin').mkdir(parents=True)
         (self.root / '.runtime/lib').mkdir(parents=True)
         executable(self.root / '.venv/bin/python', '#!/bin/sh\nprintf "%s\\n" "$PATH" "$LD_LIBRARY_PATH" "$@"\n')
