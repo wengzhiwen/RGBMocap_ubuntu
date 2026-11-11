@@ -248,6 +248,8 @@ Saved work stays valid because receipts still see baseline code identities:
 
 ## Upstream sync
 
+For the 2026-11-10/11 merge decisions, launcher compatibility lessons and validation limits, see [Upstream sync experience and workflow](UPSTREAM_SYNC.md).
+
 **Baseline:** `1b0384367fc6b63932c82f1c9c5cb4243a91de2e` (upstream `main` merged on 2026-11-10; original port baseline was `ef05127a0dbddb3f3ac672a0722dddeae42ea651`).
 
 Keep the Linux layer small and additive, and merge rather than rebase so the identity reasoning stays reviewable against each upstream version:

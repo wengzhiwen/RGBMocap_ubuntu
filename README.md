@@ -108,6 +108,7 @@ Blender 打包需要 Blender 4.5，源动作 FBX / BVH 导出不需要 Blender�
 ## 更多资料
 
 - [Ubuntu 安装、CLI、架构差异与上游同步](docs/UBUNTU.md)
+- [上游同步经验与操作流程](docs/UPSTREAM_SYNC.md)
 - [PRO 4000 / GB10 性能测量与实验性双卡结果](docs/BENCHMARK_RESULTS_UBUNTU.md)（双卡实验未接入生产推理）
 - [Agent 操作指南](docs/AGENT_GUIDE.md)
 - [第三方组件与模型许可](THIRD_PARTY_NOTICES.md)
