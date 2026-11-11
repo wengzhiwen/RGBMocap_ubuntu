@@ -77,6 +77,19 @@ Blender 打包需要 Blender 4.5，源动作 FBX / BVH 导出不需要 Blender�
 模板功能已通过 CPU 配置与路由测试，尚未单独完成真实视频 GPU 端到端验证。
 完整规则见[模板使用说明](docs/UBUNTU.md#reuse-a-projects-processing-settings)。
 
+## 上游同步新增（2026-11-10，自 ef05127a）
+
+- **导出选项**：源动作 FBX / BVH 导出新增每人物原点放置与对称休息姿态选项，
+  并新增 Maya 兼容 FBX 导出（见 [用户指南](docs/USER_GUIDE.md)）。
+- **Blender 骨骼串流**：GUI 播放或拖动时间轴时，可将所选人物的骨骼实时串流到 Blender 并烘焙成 Action；
+  插件位于 [`blender_addon/`](blender_addon/rgbmocap_bone_stream.zip?raw=1)，Linux 端尚未验证。
+- **FlowHMR 下载修复**：递归模型下载的进度回调修复（不影响推理输入）。
+- **GEM-X Native77 与 SAM 3.1 人物跟踪**：上游仅提供 Windows 安装
+  （`Setup_GEMX.cmd` / `Setup_SAM31.cmd`），本分支 Linux 端暂不可用，详见
+  [GEM-X](docs/models/GEMX.md) 与 [SAM 3.1](docs/models/SAM31.md) 指南。
+- **Windows 安装器改进**：更新自替换修复与运行时校验复用，不影响 Ubuntu 安装流程。
+- 更多通用模型与 GUI 功能说明见[模型指南](docs/models/README.md)与[用户指南](docs/USER_GUIDE.md)。
+
 ## Linux 支持与验证范围
 
 | 能力 | 当前状态 |
@@ -86,6 +99,8 @@ Blender 打包需要 Blender 4.5，源动作 FBX / BVH 导出不需要 Blender�
 | ExMR、GVHMR 及相关附加模型 | 已接入独立环境，尚未完成 Linux 端到端验证 |
 | MAMMA、PromptHMR、PEAR 实时预览 | 当前不支持 Linux |
 | ARM64 Blender 打包与角色重定向 | 需要自行提供兼容的 Blender 4.5 |
+| Maya FBX、原点放置 / 对称休息姿态导出、Blender 骨骼串流 | 代码已随上游合入，尚未在 Linux 验证 |
+| GEM-X Native77、SAM 3.1 人物跟踪 | 上游仅支持 Windows，Linux 暂不可用 |
 
 验证结论仅对应记录中的硬件、输入与设置。详细结果见 [Ubuntu 验证](docs/UBUNTU_VALIDATION.md)、
 [Spark 验证](docs/SPARK_VALIDATION.md)和 [GB10 GUI 修复与播放验证](docs/validation/gb10-gui-crash-2026-11-07.md)。
@@ -93,6 +108,7 @@ Blender 打包需要 Blender 4.5，源动作 FBX / BVH 导出不需要 Blender�
 ## 更多资料
 
 - [Ubuntu 安装、CLI、架构差异与上游同步](docs/UBUNTU.md)
+- [上游同步经验与操作流程](docs/UPSTREAM_SYNC.md)
 - [PRO 4000 / GB10 性能测量与实验性双卡结果](docs/BENCHMARK_RESULTS_UBUNTU.md)（双卡实验未接入生产推理）
 - [Agent 操作指南](docs/AGENT_GUIDE.md)
 - [第三方组件与模型许可](THIRD_PARTY_NOTICES.md)

@@ -31,7 +31,7 @@ import setup_ubuntu  # noqa: E402
 import session_lock  # noqa: E402
 import ubuntu_cli  # noqa: E402
 
-BASE_SHA = 'ef05127a0dbddb3f3ac672a0722dddeae42ea651'
+BASE_SHA = '1b0384367fc6b63932c82f1c9c5cb4243a91de2e'
 PROFILES_DIGEST = '6a21b413b26dff5f6f7325c49f0c19047b1d77a705a93942c769197431c2f7c5'
 LOCK_GROUPS_DIGEST = 'ddb0fb566ce5476693eaacd5a686d61842d1a3ec203de88a6b2a1b915a549565'
 FLOW_ADAPTER_DIGEST = '391623dd5cc17739bae4c4f6cc1250c115b51ceb613b6f10cfccbf595d069557'
