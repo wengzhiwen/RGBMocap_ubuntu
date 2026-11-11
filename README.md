@@ -31,7 +31,7 @@ sudo apt install ffmpeg libglu1-mesa libegl1 libgl1 libopengl0 libxcb-cursor0 cm
 python3 tools/setup_ubuntu.py --plan
 python3 tools/setup_ubuntu.py --stage-assets --build-correction
 ./rgbmocap.sh doctor --gpu
-./RGBMoCap.sh
+./rgbmocap-gui.sh
 ```
 
 模型权重与人体数据需另行通过 **Model Manager** 下载或导入，安装脚本不包含这些文件。

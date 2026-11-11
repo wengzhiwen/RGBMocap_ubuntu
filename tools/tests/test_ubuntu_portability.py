@@ -534,17 +534,17 @@ class Launchers(TempRoot):
         return target
 
     def test_shell_syntax_and_executable_bit(self):
-        for name in ('RGBMoCap.sh', 'rgbmocap.sh'):
+        for name in ('rgbmocap-gui.sh', 'rgbmocap.sh'):
             subprocess.run(['bash', '-n', str(ROOT / name)], check=True)
             self.assertTrue(os.access(ROOT / name, os.X_OK), name)
 
     def test_gui_launcher_requires_setup(self):
-        done = subprocess.run([str(self.copy('RGBMoCap.sh'))], capture_output=True, text=True)
+        done = subprocess.run([str(self.copy('rgbmocap-gui.sh'))], capture_output=True, text=True)
         self.assertEqual(done.returncode, 1)
         self.assertIn('setup_ubuntu.py', done.stderr)
 
     def test_gui_launcher_environment_and_interpreter_flags(self):
-        launcher = self.copy('RGBMoCap.sh')
+        launcher = self.copy('rgbmocap-gui.sh')
         (self.root / 'tools/bin').mkdir(parents=True)
         (self.root / '.runtime/lib').mkdir(parents=True)
         executable(self.root / '.venv/bin/python', '#!/bin/sh\nprintf "%s\\n" "$PATH" "$LD_LIBRARY_PATH" "$@"\n')
@@ -1245,7 +1245,7 @@ class Documentation(unittest.TestCase):
     def test_upstream_baseline_is_recorded(self):
         text = (ROOT / 'docs/UBUNTU.md').read_text(encoding='utf-8')
         self.assertIn(BASE_SHA, text)
-        for command in ('tools/setup_ubuntu.py', 'rgbmocap.sh doctor', 'RGBMoCap.sh', 'PLATFORM_ONLY'):
+        for command in ('tools/setup_ubuntu.py', 'rgbmocap.sh doctor', 'rgbmocap-gui.sh', 'PLATFORM_ONLY'):
             self.assertIn(command, text)
 
 
