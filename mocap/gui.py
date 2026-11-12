@@ -43,6 +43,7 @@ from .people_ui import PeopleWorkspace
 from .stream_ui import StreamWorkspace
 from .project_save_ui import ProjectSaving
 from .project_workspace_ui import ModelWorkspace
+from .video_batch_ui import BATCH_MODELS, VideoBatchWorkspace
 STAGES.update(mamma_prepare='Prepare Multi-view Videos',mamma_masks='MAMMA Person Masks',mamma_landmarks='MAMMA Surface Landmarks',mamma_camera='MAMMA Cameras',mamma_fit='MAMMA 3D Fit',mamma_publish='MAMMA Motion Correction and Preview')
 STAGES.update(prompthmr_prepare='Prepare PromptHMR Video',prompthmr_track='PromptHMR People and Masks',prompthmr_pose='PromptHMR Camera, Keypoints and Motion',prompthmr_world='PromptHMR Shared World and Post-optimization',prompthmr_publish='PromptHMR Motion Correction and Preview')
 from .gemx_ui import GemXWorkspace
@@ -382,7 +383,7 @@ from .prompthmr_ui import PromptHMRWorkspace
 from .pear_ui import PearWorkspace
 from .preview_export_ui import PreviewExportWorkspace
 
-class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWorkspace,MammaWorkspace,CharacterWorkspace,ModelWorkspace,ProjectSaving,PeopleWorkspace,StreamWorkspace,QMainWindow):
+class MainWindow(VideoBatchWorkspace,PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWorkspace,MammaWorkspace,CharacterWorkspace,ModelWorkspace,ProjectSaving,PeopleWorkspace,StreamWorkspace,QMainWindow):
     def __init__(self, video: Path | None = None):
         super().__init__()
         self.setWindowTitle("RGB MoCap | Motion Workspace")
@@ -433,7 +434,9 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
         self.data_loader.ready.connect(self.preview_ready)
         self.data_loader.failed.connect(self.preview_failed)
         self.data_loader.tracked_actor_ready.connect(self.tracked_actor_ready)
+        self.init_video_batch()
         build_workspace(self)
+        self.build_video_batch_menu()
         self.init_characters()
         self.video_view.frame_presented.connect(self.refresh_preview_export_action)
         self.scene_loader.ready.connect(self.refresh_preview_export_action)
@@ -469,6 +472,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
 
     @read_only_checks
     def update_readiness(self):
+        self.sync_video_batch()
         self.export_preview_action.setEnabled(self.preview_export_available())
         if self._pear_active:
             if hasattr(self,'camera_tools'):self.camera_tools.sync()
@@ -671,6 +675,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
         if jobs:self.start_jobs(jobs)
 
     def open_model_manager(self):
+        if self._video_batch is not None:return
         dialog = ModelsDialog(self)
         try:
             dialog.exec()
@@ -708,9 +713,13 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
             return
         name, _ = QFileDialog.getOpenFileName(self, "Open Video", "", "Videos (*.mp4 *.mov *.avi *.mkv *.webm)")
         if name:
+            self._batch_videos = []
             self.load_video(Path(name))
 
     def load_video(self, path):
+        path = Path(path)
+        if self._video_batch is None and self._batch_videos and path.resolve() != self._batch_videos[0]:
+            self._batch_videos = []
         if self._pear_active:return self.load_pear_videos([path])
         if self.model_choice.currentData()=='mamma':
             return self.load_mamma_videos([path])
@@ -750,7 +759,8 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
             self.video_view.open(path)
             self.update_readiness()
         except Exception as error:
-            QMessageBox.warning(self, "Video Error", str(error))
+            if self._video_batch is not None:self._video_batch.fail(str(error))
+            else:QMessageBox.warning(self, "Video Error", str(error))
 
     def video_ready(self, info):
         if self.pear_restore_media_ready():return
@@ -779,10 +789,13 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
         self.stop_playback()
         self.status.setText("Video preview: " + message)
         self.update_readiness()
+        if self._video_batch is not None and self._video_batch.phase in ('opening', 'waiting_preview'):
+            self._video_batch.fail(message)
 
     def choose_project(self):
         name, _ = QFileDialog.getOpenFileName(self, "Open Project", str(PROJECTS), "Project (project.json)")
         if name:
+            self._batch_videos = []
             from .project_workspace import root_for
             try:
                 project=Path(name).parent
@@ -1087,6 +1100,11 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
         self.input_jobs(["track", "pva"])
 
     def run_full(self):
+        if self._batch_videos and self.model_choice.currentData() in BATCH_MODELS:
+            return self.start_video_batch()
+        return self.run_full_single()
+
+    def run_full_single(self):
         tool = MOTION_TOOLS[self.model_choice.currentData()]
         if tool.key=='mamma':return self.run_mamma()
         if tool.key=='prompthmr':return self.run_prompthmr()
@@ -1352,6 +1370,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
                     self.status.setText('Motion export complete.'+(' '+paths[0] if len(paths)==1 else f' {len(paths)} files.' if paths else ''))
                     for path in paths:self.log.append('Exported: '+path)
                 self.update_readiness()
+                self.video_batch_jobs_finished()
                 return
             if self.current_stage=='save_project':
                 self.finish_project_save()
@@ -1388,6 +1407,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
                 self.character_refresh_queue=[]
             else:
                 self.next_character_refresh()
+            self.video_batch_jobs_finished()
             return
         from .queue_groups import join_single_pipeline
         self.jobs = join_single_pipeline(self.jobs, self.project)
@@ -1604,6 +1624,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
             self.finish_people_jobs()
             self.status.setText("Cannot start the processing engine. Check the app installation.")
             self.update_readiness()
+            self.video_batch_jobs_finished()
 
     def cancel_job(self):
         self.pear_leave()
@@ -1938,11 +1959,17 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
     def dropEvent(self, event):
         urls = event.mimeData().urls()
         if urls and not self.busy:
+            self._batch_videos = []
             if self._pear_active:self.load_pear_videos([Path(url.toLocalFile()) for url in urls])
             elif self.model_choice.currentData()=='mamma':self.load_mamma_videos([Path(url.toLocalFile()) for url in urls])
             else:self.load_video(Path(urls[0].toLocalFile()))
 
     def closeEvent(self, event):
+        if self._video_batch is not None:
+            controller = self._video_batch
+            controller.cancel()
+            event.ignore()
+            return
         if getattr(self, '_preview_export', None) is not None:
             self._preview_export.cancel(close_window=True)
             event.ignore()

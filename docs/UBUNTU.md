@@ -36,15 +36,16 @@ ARM64 GUI deployments pin the PySide6/Essentials/Addons/shiboken6 quartet to
 successfully on Python 3.10 but consume a `None` reference per ordinary void
 painting call, eventually aborting the GUI. The amd64/Windows 6.8.3 pins and
 numerical environments remain unchanged. Existing ARM64 installs should run
-`python3 tools/setup_ubuntu.py --profiles shared`, with the GUI closed.
-Setup and `./rgbmocap-cli.sh doctor` now exercise these bindings using the headless
+`./RGBMoCap.sh --repair`, with the GUI closed, to repair Qt and launch, or
+`python3 tools/setup_ubuntu.py --gui-only` to repair Qt without launching.
+Setup, the GUI launcher and `./rgbmocap-cli.sh doctor` exercise these bindings using the headless
 `tools/check_qt_runtime.py` probe rather than relying only on import success.
 See the [crash follow-up and 60-second GB10 playback check](validation/gb10-gui-crash-2026-11-07.md).
 
 ## Prerequisites
 
 - 64-bit Ubuntu on x86-64 or aarch64, an NVIDIA GPU with a current driver, and OpenGL 4.3 for the GUI viewport.
-- [uv](https://docs.astral.sh/uv/) (0.13.1 is what the Windows lock pins). `setup_ubuntu.py` finds it on `PATH`, at `.bootstrap/bin/uv`, or through `--uv`.
+- [uv](https://docs.astral.sh/uv/) (0.13.1 is what the Windows lock pins). `setup_ubuntu.py` prefers `.bootstrap/bin/uv` over `PATH`; `--uv` explicitly overrides both. Older uv versions may not know the pinned Python releases, even when those downloads exist.
 - FFmpeg and FFprobe, either on `PATH` or as `tools/bin/ffmpeg` and `tools/bin/ffprobe` without a suffix.
 
 System packages used by the GUI, HaMeR and the correction build:
@@ -84,7 +85,9 @@ python3 tools/setup_ubuntu.py --profiles shared --build-correction   # native co
 - Linux CUDA requirements declared by the Torch wheel, such as `nvidia-*` and `triton`, are added and recorded in `<venv>/rgbmocap-linux.json`. Profiles using `iopath` also receive `portalocker` from the existing pinned ExMR profile, satisfying its Linux file-lock dependency.
 - Python and the uv cache stay in `.runtime/python` and `.cache/uv`. Identical wheels are hardlinked from that cache, so repeated Torch files are not stored once per environment when the cache and venvs share a filesystem.
 - Each environment must pass its activation check before setup reports it ready. If uv cannot provide an exact Python, setup stops unless you pass `--python-patch-fallback`; the accepted same-minor patch is then recorded and allowed by activation.
-- Setup validates versions and import locations only, and it records `cuda_verified: false`. Importing Torch does not show that CUDA works: run `./rgbmocap-cli.sh doctor --gpu`, then a real clip.
+- Setup reuses a working existing venv with the required Python version and machine architecture, including a previously recorded same-minor fallback. Repairing packages does not require uv to download that Python again. An incompatible or broken existing venv is preserved and reported before installing packages in it. A new environment still needs an available Python download; fallback remains explicit.
+- Setup and the GUI hold the same application lock. Close the GUI before repairing or installing; another running session is refused before package changes.
+- Setup validates versions and import locations, plus Qt painting when the GUI is available, and records `cuda_verified: false`. Importing Torch does not show that CUDA works: run `./rgbmocap-cli.sh doctor --gpu`, then a real clip.
 
 Models are obtained separately, as on Windows: use **Model Manager**, or the `import_model` stage below. Do not copy runtime folders from a Windows install. Model receipts record file size and timestamp, so a copied file that shows as not ready should be imported again rather than having its receipt edited.
 
@@ -97,6 +100,28 @@ Models are obtained separately, as on Windows: use **Model Manager**, or the `im
 The original `RGBMoCap.sh` GUI entry point is preserved; `rgbmocap-gui.sh` is an additional GUI entry point with the same behavior. The CLI uses `rgbmocap-cli.sh` (formerly `rgbmocap.sh`) to avoid a filename collision with `RGBMoCap.sh` on case-insensitive filesystems. Existing GUI shortcuts continue to work; update CLI scripts to use `rgbmocap-cli.sh`.
 
 Keep the terminal open; it mirrors processing messages, as the Windows command window does. The launcher adds `tools/bin` and `.runtime/lib` when they exist, then validates `.venv` instead of reading the Windows managed-install state.
+
+Every launch checks the shared runtime, all four pinned Qt packages and their
+import paths, then runs the bounded painting probe in a separate process before
+loading the GUI. Normal startup installs nothing. If a source update leaves old
+Qt packages installed, it reports the mismatch and this repair command:
+
+```bash
+./RGBMoCap.sh --repair
+```
+
+The flag repairs Qt only when its preflight fails, verifies it again and then
+starts the app. For installation without opening a window, use
+`python3 tools/setup_ubuntu.py --gui-only`. Qt repair uses the existing validated
+shared Python and reinstalls only the architecture-pinned quartet with
+`--no-deps`; it does not install Torch, rebuild other environments or modify
+models/projects. Downloads may require internet access. A failed repair stops
+startup; it never relaxes the pins or retries indefinitely. For shared numerical
+dependency failures, use `python3 tools/setup_ubuntu.py --profiles shared`.
+
+These checks detect dependency drift and the known Qt binding fault. They do
+not guarantee that a desktop display, system OpenGL libraries or NVIDIA driver
+is available, and they do not validate inference.
 
 ## Command line
 

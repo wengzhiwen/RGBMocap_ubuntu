@@ -482,10 +482,12 @@ class SetupPlan(TempRoot):
         calls = []
         done = SimpleNamespace(returncode=0, stdout='3.10.22\n')
         with mock.patch.object(setup_ubuntu, 'ROOT', self.root), mock.patch.object(setup_ubuntu, 'run', side_effect=lambda command, check=True: calls.append(list(map(str, command))) or done), \
-                mock.patch.object(setup_ubuntu.subprocess, 'run', return_value=done):
+                mock.patch.object(setup_ubuntu.subprocess, 'run', return_value=done), \
+                mock.patch.object(setup_ubuntu, 'existing_python', return_value=('3.10.22', False)), \
+                mock.patch.object(setup_ubuntu, 'ensure_python', side_effect=AssertionError('Existing Python must be reused')):
             setup_ubuntu.install_profile('uv', plan, self.root / 'wheels-root', self.root / 'work', False)
         python = str(self.root / '.venv/bin/python')
-        self.assertEqual(calls[0], ['uv', 'python', 'install', '3.10.22', '--no-bin'])
+        self.assertEqual(calls[0][:3], ['uv', 'pip', 'install'])
         installs = [call for call in calls if call[:3] == ['uv', 'pip', 'install']]
         self.assertEqual(len(installs), 4)
         self.assertTrue(all('--no-deps' in call and python in call for call in installs))
@@ -1054,7 +1056,9 @@ class AarchInstall(TempRoot):
             return SimpleNamespace(returncode=1 if 'pyside6==6.8.3' in calls[-1] else 0)
         done = SimpleNamespace(returncode=0, stdout='3.10.22\n')
         with mock.patch.object(setup_ubuntu, 'ROOT', self.root), mock.patch.object(setup_ubuntu, 'run', side_effect=fake_run), \
-                mock.patch.object(setup_ubuntu.subprocess, 'run', return_value=done), mock.patch('builtins.print') as output:
+                mock.patch.object(setup_ubuntu.subprocess, 'run', return_value=done), \
+                mock.patch.object(setup_ubuntu, 'existing_python', return_value=('3.10.22', False)), \
+                mock.patch('builtins.print') as output:
             setup_ubuntu.install_profile('uv', plan, self.root / 'wheels', self.root / 'work', False)
         first = next(call for call in calls if call[:3] == ['uv', 'pip', 'install'])
         self.assertIn('--require-hashes', first)
