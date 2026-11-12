@@ -308,6 +308,13 @@ Automatic can overlap bounded CPU image preparation with GPU work when CPU/RAM
 headroom permits; Low Memory disables that prefetch. For measured worker-startup
 and feature-stage gains, see [resource modes and optimizations](PERFORMANCE.md).
 
+## Batch processing
+
+Use **Batch Processing > Select Videos...** to queue independent videos, configure
+the first in the workspace, then choose **Setup Export...** and click
+**Reconstruct 3D (N)**. The modal progress window supports cancellation; failures
+are recorded and processing continues. See [batch workflow and output details](BATCH_PROCESSING.md).
+
 ## Choose a model
 
 Each model has a [detailed guide](models/README.md): [ExMR](models/EXMR.md),

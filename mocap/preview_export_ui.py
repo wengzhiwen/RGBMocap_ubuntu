@@ -42,7 +42,9 @@ class ExportProgress(QDialog):
 
 
 class PreviewExport(QObject):
-    def __init__(self, window, destination, resume=False):
+    completed = Signal(bool, str, bool)
+
+    def __init__(self, window, destination, resume=False, progress_dialog=None):
         super().__init__(window)
         self.window, self.destination, self.resume = window, Path(destination), resume
         self.writer = None
@@ -66,7 +68,8 @@ class PreviewExport(QObject):
         self.audio, self.audio_start = self.audio_source()
         # Reuse one native progress window across exports (including its GPU
         # presentation resources) instead of repeatedly creating top-levels.
-        self.dialog = getattr(window, '_preview_export_dialog', None)
+        self.owns_dialog = progress_dialog is None
+        self.dialog = progress_dialog or getattr(window, '_preview_export_dialog', None)
         if self.dialog is None:
             self.dialog = window._preview_export_dialog = ExportProgress(window)
         self.dialog.allow_close = False
@@ -261,8 +264,9 @@ class PreviewExport(QObject):
         w.slider.setValue(self.original_frame)
         w.slider.blockSignals(False)
         w.seek(self.original_frame)
-        self.dialog.allow_close = True
-        self.dialog.accept()
+        if self.owns_dialog:
+            self.dialog.allow_close = True
+            self.dialog.accept()
         self.dialog.cancel_requested.disconnect(self.cancel)
         error = self.error or (self.writer.error if self.writer is not None else None)
         success = self.writer is not None and self.writer.succeeded
@@ -276,6 +280,7 @@ class PreviewExport(QObject):
             w.toggle_play()
         if self.close_window:
             QTimer.singleShot(0, w.close)
+        self.completed.emit(success, message, self.cancelling and error is None)
         self.deleteLater()
 
 
@@ -316,7 +321,7 @@ class PreviewExportWorkspace:
             QMessageBox.warning(self, 'Export Preview', str(exc))
             if resume:self.toggle_play()
 
-    def start_preview_export(self, destination, *, resume=None):
+    def start_preview_export(self, destination, *, resume=None, progress_dialog=None):
         if not self.preview_export_available():
             raise ValueError('Load an offline motion and its video before exporting a preview. PEAR is not supported.')
         path = Path(destination).resolve()
@@ -330,7 +335,8 @@ class PreviewExportWorkspace:
             raise ValueError('The timeline trim is invalid.')
         from .video import executable
         executable('ffmpeg')
-        controller = PreviewExport(self, path, self.timer.isActive() if resume is None else resume)
+        controller = PreviewExport(self, path, self.timer.isActive() if resume is None else resume, progress_dialog)
         self._preview_export = controller
         self.export_preview_action.setEnabled(False)
         controller.start()
+        return controller
