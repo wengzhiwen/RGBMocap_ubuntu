@@ -15,10 +15,9 @@ CUDA libraries come from the pinned Torch wheel metadata; iopath also receives t
 existing pinned portalocker dependency.
 Model weights are never downloaded here; --stage-assets fetches auxiliary files only.
 
-amd64 installs exactly these pins. aarch64 (NVIDIA DGX Spark) replaces only Torch and
-torchvision, from installer/linux-aarch64.json, because the amd64 CUDA builds have no ARM
-wheels or do not support its GPU. Those two are hash-pinned to the CUDA index: PyPI has a
-different torchvision build under the same version.
+amd64 installs exactly these pins. aarch64 (NVIDIA DGX Spark) replaces Torch,
+torchvision and the GUI quartet through installer/linux-aarch64.json. The CUDA
+wheels are hash-pinned to their index; the Qt versions avoid an ARM painting fault.
 
 Setup validates versions and import locations. It does not run CUDA; use doctor --gpu.
 """
@@ -39,7 +38,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from runtime_support import ROOT, prepared_lock, sha  # noqa: E402
 
 sys.path.insert(0, str(ROOT))
-from mocap.linux_runtime import SUPPORTED_MACHINES, linux_variant, normalize_machine  # noqa: E402
+from mocap.linux_runtime import (SUPPORTED_MACHINES, allowed_python, extra_packages,
+                                 linux_variant, normalize_machine)  # noqa: E402
+from session_lock import app_lock  # noqa: E402
 
 CUDA_INDEX = 'https://download.pytorch.org/whl/cu128'
 UV_VERSION = '0.13.1'
@@ -151,14 +152,16 @@ def linux_dependencies(metadata, pinned, machine='x86_64'):
 def find_uv(explicit=None):
     if explicit:
         return Path(explicit).resolve()
+    # The project bootstrap knows the pinned Python releases; an older uv on PATH
+    # may not even list them in its built-in download catalog.
+    local = ROOT / '.bootstrap/bin/uv'
+    if local.is_file():
+        return local
     found = shutil.which('uv')
     if found:
         return Path(found)
-    local = ROOT / '.bootstrap/bin/uv'
-    if not local.is_file():
-        raise SystemExit(f'uv was not found. Install uv {UV_VERSION} privately, then pass --uv:\n'
-                         f'  python3 -m venv {ROOT}/.bootstrap && {ROOT}/.bootstrap/bin/pip install uv=={UV_VERSION}')
-    return local
+    raise SystemExit(f'uv was not found. Install uv {UV_VERSION} privately, then pass --uv:\n'
+                     f'  python3 -m venv {ROOT}/.bootstrap && {ROOT}/.bootstrap/bin/pip install uv=={UV_VERSION}')
 
 
 def uv_environment():
@@ -182,16 +185,69 @@ def ensure_python(uv, version, allow_fallback):
     if run([uv, 'python', 'install', version, '--no-bin'], check=False).returncode == 0:
         return version, False
     if not allow_fallback:
-        raise SystemExit(f'uv cannot provide Python {version}. Pass --python-patch-fallback to use the newest {version.rsplit(".", 1)[0]} patch.')
+        raise SystemExit(f'uv cannot provide Python {version}. Check network access and use uv {UV_VERSION} '
+                         '(older uv download catalogs can omit this release). '
+                         f'Pass --python-patch-fallback to use the newest {version.rsplit(".", 1)[0]} patch.')
     minor = version.rsplit('.', 1)[0]
     run([uv, 'python', 'install', minor, '--no-bin'])
     return minor, True
 
 
+def existing_python(venv, pinned, allow_fallback=False):
+    """Validate an existing venv before touching it; never bootstrap over it."""
+    python = venv / 'bin/python'
+    if not venv.exists():
+        return None
+    code = ('import json,platform,sys;'
+            'print(json.dumps([platform.python_version(),platform.machine(),'
+            'sys.prefix,sys.base_prefix]))')
+    try:
+        result = subprocess.run([str(python), '-I', '-X', 'utf8', '-c', code],
+                                capture_output=True, text=True, encoding='utf-8', check=True, timeout=15)
+        version, machine, prefix, base = json.loads(result.stdout)
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        raise SystemExit(f'Existing environment {venv} has no usable Python; it was preserved. {error}') from None
+    same_minor = version.split('.')[:2] == pinned.split('.')[:2]
+    if (Path(prefix).resolve() != venv.resolve() or prefix == base
+            or normalize_machine(machine) != normalize_machine()
+            or (version not in allowed_python(venv, pinned) and not (allow_fallback and same_minor))):
+        raise SystemExit(f'Existing environment {venv} has incompatible Python {version} ({machine}); '
+                         f'expected {pinned} ({normalize_machine()}). It was preserved. '
+                         'Use --python-patch-fallback only to accept a same-minor patch.')
+    print(f'Reusing Python {version} in {venv}', flush=True)
+    return version, version != pinned
+
+
+def gui_requirements(root, machine=None):
+    """Keep GUI repair on the same quartet and architecture pins as installation."""
+    lock = json.loads((Path(root) / 'installer/runtime-lock.json').read_text(encoding='utf-8'))
+    replacements = {normalize(name): version for name, version in extra_packages('gui', machine).items()}
+    return [f'{name}=={replacements.get(key, version)}'
+            for key, (name, version) in sorted(group_pins(root, lock, 'gui').items())]
+
+
+def check_runtime(root, key):
+    run([Path(root) / '.venv/bin/python', '-I', '-X', 'utf8', Path(root) / 'worker_boot.py', '--runtime-check', key])
+
+
+def repair_gui(uv):
+    """Caller holds app_lock. Repair Qt only, using an already valid shared runtime."""
+    from mocap.runtime_registry import PROFILES
+    if existing_python(ROOT / '.venv', PROFILES['gui']['python']) is None:
+        raise SystemExit('Prepare the shared environment first: python3 tools/setup_ubuntu.py --profiles shared')
+    check_runtime(ROOT, 'shared')
+    run([uv, 'pip', 'install', '--python', ROOT / '.venv/bin/python', '--no-deps',
+         '--only-binary', ':all:', '--reinstall', *gui_requirements(ROOT)])
+    check_runtime(ROOT, 'gui')
+    run([ROOT / '.venv/bin/python', '-I', '-X', 'utf8', ROOT / 'tools/check_qt_runtime.py'])
+    print('READY gui (versions, import paths and Qt painting checked)', flush=True)
+
+
 def install_profile(uv, plan, wheels_root, work, allow_fallback):
     venv = ROOT / plan['folder']
     python = venv / 'bin/python'
-    requested, fallback = ensure_python(uv, plan['python'], allow_fallback)
+    existing = existing_python(venv, plan['python'], allow_fallback)
+    requested, fallback = existing or ensure_python(uv, plan['python'], allow_fallback)
     if not python.is_file():
         run([uv, 'venv', venv, '--python', requested, '--python-preference', 'only-managed'])
     requirements = work / f"{plan['profile']}.txt"
@@ -256,6 +312,8 @@ def main(argv=None):
     parser.add_argument('--plan', action='store_true', help='Print exact pins without changing anything.')
     parser.add_argument('--machine', help='Plan for another architecture, such as aarch64 or x86_64; with --plan only.')
     parser.add_argument('--uv', type=Path)
+    parser.add_argument('--gui-only', action='store_true',
+                        help='Repair only the pinned Qt packages in an existing shared environment.')
     parser.add_argument('--python-patch-fallback', action='store_true',
                         help='Accept and record the newest same-minor Python if uv lacks the exact pin.')
     parser.add_argument('--build-correction', action='store_true', help='Build the native correction module (needs CMake and a C++17 compiler).')
@@ -269,25 +327,38 @@ def main(argv=None):
     if machine != normalize_machine() and not args.plan:
         raise SystemExit(f'--machine {machine} can only be used with --plan on this {normalize_machine()} system.')
     profiles = list(FOLDERS) if 'all' in args.profiles else list(dict.fromkeys(args.profiles))
+    if args.gui_only:
+        if args.plan or args.build_correction or args.stage_assets:
+            parser.error('--gui-only cannot be combined with --plan, --build-correction or --stage-assets')
+        if profiles != list(DEFAULT_PROFILES) and profiles != ['shared']:
+            parser.error('--gui-only uses only the shared environment')
+        with app_lock(ROOT):
+            repair_gui(find_uv(args.uv))
+        return 0
     if args.plan:
         with tempfile.TemporaryDirectory() as folder:
             lock = prepared_lock(folder)
         print(json.dumps([profile_plan(ROOT, lock, profile, machine) for profile in profiles], indent=2))
         return 0
-    work = ROOT / 'build/dependencies'
-    lock = prepared_lock(work)
-    plans = [profile_plan(ROOT, lock, profile, machine) for profile in profiles]
-    uv = find_uv(args.uv)
-    for plan in plans:
-        install_profile(uv, plan, work, ROOT / 'build/ubuntu', args.python_patch_fallback)
-    if args.stage_assets:
-        run([sys.executable, ROOT / 'tools/stage_assets.py', '--download'])
-    if args.build_correction:
-        build_correction()
+    with app_lock(ROOT):
+        work = ROOT / 'build/dependencies'
+        lock = prepared_lock(work)
+        plans = [profile_plan(ROOT, lock, profile, machine) for profile in profiles]
+        uv = find_uv(args.uv)
+        for plan in plans:
+            install_profile(uv, plan, work, ROOT / 'build/ubuntu', args.python_patch_fallback)
+        if args.stage_assets:
+            run([sys.executable, ROOT / 'tools/stage_assets.py', '--download'])
+        if args.build_correction:
+            build_correction()
     print('Environments installed; versions and import paths were validated, but CUDA has not been run.\n'
           'Import model files through Model Manager, then verify with: ./rgbmocap.sh doctor --gpu')
     return 0
 
 
 if __name__ == '__main__':
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+        print(f'Setup failed: {error}', file=sys.stderr)
+        raise SystemExit(1)
