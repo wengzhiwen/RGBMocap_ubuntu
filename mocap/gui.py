@@ -789,7 +789,7 @@ class MainWindow(VideoBatchWorkspace,PreviewExportWorkspace,PearWorkspace,GemXWo
         self.stop_playback()
         self.status.setText("Video preview: " + message)
         self.update_readiness()
-        if self._video_batch is not None and self._video_batch.phase in ('opening', 'waiting_preview'):
+        if self._video_batch is not None and self._video_batch.phase in ('opening', 'people_ready', 'waiting_preview'):
             self._video_batch.fail(message)
 
     def choose_project(self):

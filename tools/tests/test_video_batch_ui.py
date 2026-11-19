@@ -17,7 +17,7 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 try:
-    from PySide6.QtCore import QObject, Signal
+    from PySide6.QtCore import QObject, Qt, Signal
     from PySide6.QtWidgets import QApplication, QDialog, QLabel, QProgressBar, QWidget
     from mocap.video_batch_ui import BatchExportDialog, VideoBatch, trimmed_frames
     HAS_QT = True
@@ -45,6 +45,9 @@ if HAS_QT:
             self.progress = QProgressBar()
             self.log = SimpleNamespace(append=Mock())
             self.people_state = None
+            self.people_root = None
+            self.people_list = None
+            self.checked_people = lambda: []
             self.project = root / 'project'
             self.project.mkdir()
             self.active_result = 'corrected_initial'
@@ -52,6 +55,8 @@ if HAS_QT:
             self.run_full_single = Mock(side_effect=self.run)
             self.submit_fbx_exports = Mock(side_effect=self.export)
             self.start_preview_export = Mock(side_effect=self.preview)
+            self.input_jobs = Mock(side_effect=lambda stages, **kwargs: setattr(self, 'busy', True))
+            self.start_jobs = Mock(side_effect=lambda jobs, **kwargs: setattr(self, 'busy', True))
             self.update_readiness = Mock()
             self.cancel_job = Mock()
             self.ready_for_preview = False
@@ -126,9 +131,11 @@ class BatchLifecycle(unittest.TestCase):
         self.w.close()
         self.temp.cleanup()
 
-    def make_batch(self, count=2, preview=False, fmt='fbx'):
+    def make_batch(self, count=2, preview=False, fmt='fbx', **extra):
         videos = [self.w.video_path] + [self.root / f'video{i}.mp4' for i in range(1, count)]
-        self.batch = VideoBatch(self.w, videos, dict(folder=str(self.root), format=fmt, preview=preview))
+        options = dict(folder=str(self.root), format=fmt, preview=preview)
+        options.update(extra)
+        self.batch = VideoBatch(self.w, videos, options)
         self.w._video_batch = self.batch
         self.batch.start()
         self.batch.timer.stop()  # tests drive transitions explicitly
@@ -294,6 +301,96 @@ class BatchLifecycle(unittest.TestCase):
         self.assertEqual(len(files), 3)
         self.assertEqual(len({row[3] for row in files}), 3)
 
+    @patch('mocap.models.missing', return_value=[])
+    def test_find_people_checks_first_three_then_reconstructs_and_exports(self, _missing):
+        w = self.w
+        # A people root whose discovery trim does not match forces a fresh find.
+        (w.project / 'project.json').write_text(json.dumps(dict(start=1.5, end=11.5, frames=300, fps=30.)))
+        w.people_root = w.project
+        b = self.make_batch(count=1, auto_people=True, people_limit=3)
+        b.tick()
+        self.assertEqual(b.phase, 'finding_people')
+        w.input_jobs.assert_called_once_with(['people'])
+        # finish_people_jobs populates the workspace before the batch hears back,
+        # and load_project reopens the preview, so the video is briefly unreadable.
+        people = [dict(id=i, name=f'Person {i}', checked=i == 1, takes=[]) for i in range(1, 6)]
+        w.people_state = {'people': people}
+        w.checked_people = lambda: [p for p in w.people_state['people'] if p['checked']]
+        w.video_readable = False
+        self.settle()
+        self.assertEqual(b.phase, 'people_ready')
+        w.run_full_single.assert_not_called()
+        w.video_readable = True
+        b.tick()
+        self.assertEqual(b.phase, 'reconstructing')
+        self.assertEqual([p['id'] for p in w.checked_people()], [1, 2, 3])
+        w.run_full_single.assert_called_once()
+        for person in w.checked_people():
+            person['takes'] = [dict(project=f'person{person["id"]}/take1')]
+        with patch('mocap.motion_tools.selected_export', side_effect=lambda project, kind: project / 'motion.bvh'):
+            self.settle()
+        files = w.submit_fbx_exports.call_args.args[0]
+        self.assertEqual(len(files), 3)
+        self.assertEqual(len({row[3] for row in files}), 3)
+
+    @patch('mocap.models.missing', return_value=[])
+    def test_people_ready_times_out_when_preview_never_opens(self, _missing):
+        b = self.make_batch(count=1, auto_people=True)
+        self.w.video_readable = False
+        b.set_phase('people_ready')
+        b.wait_started = time.monotonic() - 61
+        b.tick()
+        self.next_video()
+        self.assertIn('Timed out', b.rows[0]['error'])
+
+    @patch('mocap.models.missing', return_value=[])
+    def test_first_video_manual_people_selection_is_kept(self, _missing):
+        w = self.w
+        w.people_state = {'people': [dict(id=2, name='Person 2', checked=True, takes=[])]}
+        w.checked_people = lambda: [p for p in w.people_state['people'] if p['checked']]
+        b = self.make_batch(count=1, auto_people=True)
+        b.tick()
+        self.assertEqual(b.phase, 'reconstructing')
+        w.input_jobs.assert_not_called()
+        w.run_full_single.assert_called_once()
+
+    @patch('mocap.models.missing', return_value=[])
+    def test_find_without_people_fails_the_video(self, _missing):
+        b = self.make_batch(auto_people=True)
+        b.tick()
+        self.assertEqual(b.phase, 'finding_people')
+        self.settle()
+        self.next_video()
+        self.assertEqual(b.index, 1)
+        self.assertIn('No people', b.rows[0]['error'])
+
+    @patch('mocap.models.missing', return_value=[SimpleNamespace(name='YOLO Detector')])
+    def test_missing_detection_models_refuse_batch_start(self, _missing):
+        with self.assertRaises(ValueError):
+            VideoBatch(self.w, [self.w.video_path],
+                       dict(folder=str(self.root), format='fbx', auto_people=True))
+
+    @patch('mocap.models.missing', return_value=[])
+    def test_people_list_check_states_are_synced(self, _missing):
+        from PySide6.QtWidgets import QListWidget, QListWidgetItem
+        w = self.w
+        people_list = QListWidget()
+        w.people_list = people_list
+        people = [dict(id=i, name=f'Person {i}', checked=False, takes=[]) for i in range(1, 5)]
+        w.people_state = {'people': people}
+        w.checked_people = lambda: [p for p in w.people_state['people'] if p['checked']]
+        for person in people:
+            item = QListWidgetItem(person['name'])
+            item.setData(Qt.UserRole, person['id'])
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            people_list.addItem(item)
+        b = self.make_batch(count=1, auto_people=True, people_limit=2)
+        b.people_selected()
+        states = [people_list.item(row).checkState() for row in range(people_list.count())]
+        self.assertEqual(states, [Qt.Checked, Qt.Checked, Qt.Unchecked, Qt.Unchecked])
+        self.assertEqual([p['id'] for p in w.checked_people()], [1, 2])
+
     def test_timeout_continues(self):
         b = self.make_batch()
         self.w.video_readable = False
@@ -362,7 +459,8 @@ class RealGuiIntegration(unittest.TestCase):
     def test_export_dialog_roundtrip(self):
         with tempfile.TemporaryDirectory() as folder:
             saved = dict(folder=folder, format='bvh', bvh_profile='biped', prepend_tpose=True,
-                         place_at_origin=True, symmetric_rest=True, preview=True)
+                         place_at_origin=True, symmetric_rest=True, preview=True,
+                         auto_people=True, people_limit=3)
             dialog = BatchExportDialog(self.w, saved)
             self.assertEqual(dialog.options(), saved)
             dialog.accept()
@@ -372,7 +470,8 @@ class RealGuiIntegration(unittest.TestCase):
     def test_fbx_compatibility_option_is_restored(self):
         with tempfile.TemporaryDirectory() as folder:
             saved = dict(folder=folder, format='fbx', bvh_profile='generic', prepend_tpose=False,
-                         fbx_compatibility=True, place_at_origin=True, symmetric_rest=True, preview=False)
+                         fbx_compatibility=True, place_at_origin=True, symmetric_rest=True, preview=False,
+                         auto_people=False, people_limit=5)
             dialog = BatchExportDialog(self.w, saved)
             self.assertEqual(dialog.options(), saved)
             dialog.deleteLater()

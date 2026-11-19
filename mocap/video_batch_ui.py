@@ -2,16 +2,21 @@
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
+import json
 import time
 
 from PySide6.QtCore import QObject, QTimer, Qt, Signal
 from PySide6.QtWidgets import (QCheckBox, QDialog, QFileDialog, QHBoxLayout, QLabel,
-    QLineEdit, QMenu, QProgressBar, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+    QLineEdit, QMenu, QProgressBar, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from .source_export_dialog import SourceExportDialog
 from .storage import atomic_json
+from .tooltips import tooltip_text
 
 BATCH_MODELS = frozenset(('exmr', 'flowhmr', 'gvhmr', 'prompthmr'))
+# Find People discovery applies to the models whose pipeline consumes the
+# per-person workspace; PromptHMR tracks its own people inside its pipeline.
+PEOPLE_BATCH_MODELS = frozenset(('exmr', 'flowhmr', 'gvhmr'))
 
 
 class BatchExportDialog(SourceExportDialog):
@@ -34,10 +39,27 @@ class BatchExportDialog(SourceExportDialog):
         self.preview = QCheckBox('Export Preview Video')
         self.preview.setChecked(saved.get('preview', False))
         layout.addWidget(self.preview)
+        people = QHBoxLayout()
+        self.auto_people = QCheckBox('Find people first; check the first')
+        self.auto_people.setChecked(saved.get('auto_people', True))
+        self.auto_people.setToolTip(tooltip_text('Run Find People on every video before reconstruction and '
+                                                 'check the first people automatically, so each is reconstructed '
+                                                 'and exported separately. The default tracker is used.'))
+        self.people_limit = QSpinBox()
+        self.people_limit.setRange(1, 10)
+        self.people_limit.setValue(saved.get('people_limit', 3))
+        self.people_limit.setToolTip(tooltip_text('How many of the first found people are checked per video.'))
+        people.addWidget(self.auto_people)
+        people.addWidget(self.people_limit)
+        people.addWidget(QLabel('people'))
+        people.addStretch()
+        layout.addLayout(people)
         note = QLabel('Each run creates a new batch folder with per-video exports and a progress/error report. '
                       'The first video supplies the shared model settings and trim in seconds. '
                       'An untrimmed first video processes every video in full; shorter videos are clamped. '
-                      'People are tracked automatically in subsequent videos.')
+                      'Find People runs per video with the default tracker and checks the first people '
+                      '(ExMR, FlowHMR, GVHMR); a first video with a manual People selection keeps it. '
+                      'PromptHMR uses its own people settings.')
         note.setWordWrap(True)
         layout.addWidget(note)
         self.layout().insertWidget(self.layout().count() - 1, panel)
@@ -64,7 +86,8 @@ class BatchExportDialog(SourceExportDialog):
         super().accept()
 
     def options(self):
-        return dict(super().options(), folder=self.folder.text().strip(), preview=self.preview.isChecked())
+        return dict(super().options(), folder=self.folder.text().strip(), preview=self.preview.isChecked(),
+                    auto_people=self.auto_people.isChecked(), people_limit=self.people_limit.value())
 
 
 class BatchProgress(QDialog):
@@ -146,6 +169,12 @@ class VideoBatch(QObject):
                     and window.slider.clip_out == window.info['frames']):
                 self.trim = (first, end)
         self.model = window.model_choice.currentData()
+        if options.get('auto_people') and self.model in PEOPLE_BATCH_MODELS:
+            from .models import missing
+            unavailable = missing('people')
+            if unavailable:
+                raise ValueError('Prepare person detection models first: '
+                                 + ', '.join(p.name for p in unavailable))
         self.index = -1
         self.phase = 'starting'
         self.stopping = False
@@ -234,17 +263,22 @@ class VideoBatch(QObject):
                 # Keep the first video's own person/take selection and source trim.
                 if not self.keep_first:
                     w.slider.set_clip(*trimmed_frames(w.info, self.trim))
-                self.set_phase('reconstructing')
-                w.run_full_single()
-                if not w.busy:
-                    self.fail(w.status.text() or 'Reconstruction did not start.')
+                if self.needs_find_people():
+                    self.set_phase('finding_people')
+                    self.start_find_people()
+                    if not w.busy:
+                        self.fail(w.status.text() or 'Find People did not start.')
+                else:
+                    self.begin_reconstructing()
+            elif self.phase == 'people_ready' and w.video_readable and w.info:
+                self.begin_reconstructing()
             elif self.phase == 'waiting_preview' and w.preview_export_available():
                 self.set_phase('preview')
                 controller = w.start_preview_export(self.output / 'preview.mp4', resume=False, progress_dialog=self.dialog)
                 controller.completed.connect(self.preview_finished)
-            elif self.phase in ('opening', 'waiting_preview') and time.monotonic() - self.wait_started > 60:
+            elif self.phase in ('opening', 'people_ready', 'waiting_preview') and time.monotonic() - self.wait_started > 60:
                 self.fail('Timed out waiting for video or motion preview.')
-            if self.phase in ('reconstructing', 'exporting'):
+            if self.phase in ('finding_people', 'reconstructing', 'exporting'):
                 self.dialog.label.setText(w.status.text() + '\n' + w.task_info.text())
                 self.dialog.progress.setRange(w.progress.minimum(), w.progress.maximum())
                 self.dialog.progress.setValue(w.progress.value())
@@ -256,8 +290,77 @@ class VideoBatch(QObject):
             else:
                 self.fail(str(error))
 
+    def needs_find_people(self):
+        """Run discovery per video when the option is on; PromptHMR and an
+        existing manual first-video People selection keep their own people."""
+        if not self.options.get('auto_people') or self.model not in PEOPLE_BATCH_MODELS:
+            return False
+        if self.index == 0 and self.keep_first and self.window.people_state:
+            if any(p.get('checked') for p in self.window.people_state.get('people', [])):
+                return False
+        return True
+
+    def start_find_people(self):
+        """Start the people discovery stage exactly like the Find person button's
+        default tracker, including reuse of an existing matching people root."""
+        w = self.window
+        from .models import missing
+        unavailable = missing('people')
+        if unavailable:
+            raise RuntimeError('Prepare person detection models first: '
+                               + ', '.join(p.name for p in unavailable))
+        if getattr(w, 'people_root', None) is not None and w.info is not None and w.video_readable:
+            manifest = json.loads((w.people_root / 'project.json').read_text(encoding='utf-8'))
+            first, end = w.processing_range()
+            root_start = float(manifest['start'])
+            root_end = min(float(manifest['end']), root_start + manifest['frames'] / manifest['fps'])
+            # Cached discovery belongs to the group's complete input, not to a
+            # newly trimmed preview or a shorter selected person's take.
+            if abs(first - root_start) < 1e-6 and abs(end - root_end) < 1e-6:
+                w.start_jobs([('people', ['--project', str(w.people_root)])])
+                return
+        w.input_jobs(['people'])
+
+    def people_selected(self):
+        """Check the first found people, then start reconstruction."""
+        w = self.window
+        people = w.people_state['people'] if w.people_state else []
+        if not people:
+            raise RuntimeError('No people were found in this video.')
+        limit = max(1, int(self.options.get('people_limit', 3)))
+        wanted = {p['id'] for p in people[:limit]}
+        for person in people:
+            person['checked'] = person['id'] in wanted
+        if getattr(w, 'people_root', None) is not None:
+            from .people_store import save_people
+            save_people(w.people_root, w.people_state)
+        people_list = getattr(w, 'people_list', None)
+        if people_list is not None:
+            for row in range(people_list.count()):
+                item = people_list.item(row)
+                ident = item.data(Qt.UserRole)
+                if isinstance(ident, str):
+                    continue  # character rows are not people
+                state = Qt.Checked if ident in wanted else Qt.Unchecked
+                if item.checkState() != state:
+                    item.setCheckState(state)
+        w.log.append(f"Batch: checked {len(wanted)} of {len(people)} found "
+                     f"{'person' if len(people) == 1 else 'people'} (limit {limit}).")
+        if w.video_readable and w.info:
+            self.begin_reconstructing()
+        else:
+            # Loading the people workspace reopens its preview; wait like 'opening'.
+            self.set_phase('people_ready')
+
+    def begin_reconstructing(self):
+        self.set_phase('reconstructing')
+        w = self.window
+        w.run_full_single()
+        if not w.busy:
+            self.fail(w.status.text() or 'Reconstruction did not start.')
+
     def jobs_finished(self, failed, cancelled, message):
-        if self.phase not in ('reconstructing', 'exporting'):
+        if self.phase not in ('finding_people', 'reconstructing', 'exporting'):
             return
         if self.stopping:
             return  # tick waits for the cancellation helper too
@@ -267,7 +370,9 @@ class VideoBatch(QObject):
             self.fail(error or message)
             return
         try:
-            if self.phase == 'reconstructing':
+            if self.phase == 'finding_people':
+                self.people_selected()
+            elif self.phase == 'reconstructing':
                 self.rows[self.index]['project'] = str(self.window.project)
                 self.export_motion()
             else:

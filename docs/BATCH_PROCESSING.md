@@ -14,17 +14,29 @@ This uses the existing preview exporter, including its frame pairing and audio.
 FBX compatibility for Maya, placement at the origin and symmetrical rest pose
 use the same options as individual source exports and are retained by batch setup.
 
+**Find people first; check the first N people** (default on, limit 3) runs the
+ordinary Find People discovery on every video before reconstruction and checks
+the first N found people automatically, in first-appearance order. Each checked
+person is then reconstructed and exported separately, so a two-actor video
+produces one motion file per actor. The default tracker is used; the SAM 3.1
+tracker stays interactive and is not used by batch. The option applies to ExMR,
+FlowHMR and GVHMR. The first video keeps a manual People selection that already
+has a checked person, so you can still pick specific people there by hand.
+If the person detection models are not prepared, the batch refuses to start.
+
 Click **Reconstruct 3D (N)** to start. If export has not been configured, its
 setup dialog opens first. An application-modal progress window blocks workspace
 interaction, shows each video's status and the active task, and offers
 **Cancel Batch**. Closing this window or pressing Escape during processing also
 requests cancellation. The summary remains open until you close it.
 
-Videos run sequentially: reconstruct, export motion, optionally export preview,
-then open the next video. The shared settings are captured when the batch starts.
-The first video's selected people/takes are retained. Later videos track people
-automatically; identities and manual contact timings are not copied between
-videos. PromptHMR uses its configured people and interaction settings.
+Videos run sequentially: find people (when enabled), reconstruct, export motion,
+optionally export preview, then open the next video. The shared settings are
+captured when the batch starts. The first video's selected people/takes are
+retained when it already has a checked person; otherwise the first N found
+people are checked. Later videos follow the same automatic rule; identities and
+manual contact timings are not copied between videos. PromptHMR uses its
+configured people and interaction settings.
 
 If the first video is untrimmed, each video is processed in full. Otherwise its
 trim is applied in **source seconds**, clamped to each video's end. A video with

@@ -391,7 +391,9 @@ and feature-stage gains, see [resource modes and optimizations](PERFORMANCE.md).
 Use **Batch Processing > Select Videos...** to queue independent videos, configure
 the first in the workspace, then choose **Setup Export...** and click
 **Reconstruct 3D (N)**. The modal progress window supports cancellation; failures
-are recorded and processing continues. See [batch workflow and output details](BATCH_PROCESSING.md).
+are recorded and processing continues. Batch export can run Find People on every
+video and check the first people automatically, so multi-actor videos export one
+motion file per person. See [batch workflow and output details](BATCH_PROCESSING.md).
 
 ## Choose a model
 
