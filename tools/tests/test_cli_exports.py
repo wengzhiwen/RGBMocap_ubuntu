@@ -484,6 +484,10 @@ class WorkerEntries(TempRoot):
         emitted = []
         saved = sys.argv
         request = self.root / 'r.json'
+        # The worker's face-sidecar planning reads the request before the export runs.
+        request.write_text(json.dumps([dict(project=str(self.project), kind='initial',
+                                            source=str(self.project / 'motion.bvh'),
+                                            target=str(self.root / 'out.blend'), export_face=False)]))
         sys.argv = ['mocap.worker', 'save_blend', '--project', str(self.project), '--output', str(request)]
         try:
             from mocap import blend_export_worker

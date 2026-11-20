@@ -479,7 +479,8 @@ class MainWindow(VideoBatchWorkspace,PreviewExportWorkspace,PearWorkspace,GemXWo
     def update_readiness(self):
         self.sync_video_batch()
         self.export_preview_action.setEnabled(self.preview_export_available())
-        self.track_face.setVisible(not self._pear_active)
+        from .face_runtime import AVAILABLE
+        self.track_face.setVisible(AVAILABLE and not self._pear_active)
         self.face_overlay.setVisible(not self._pear_active)
         for control in (self.set_neutral_face, self.reset_neutral_face, self.neutral_face_note):
             control.setVisible(not self._pear_active)

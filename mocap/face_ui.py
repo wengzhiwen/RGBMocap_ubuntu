@@ -1,6 +1,7 @@
 """Link the optional face worker to the ordinary offline processing queue."""
 from PySide6.QtCore import QSignalBlocker, Qt
 from .face_data import root_for
+from .face_runtime import AVAILABLE
 
 
 class FaceWorkspace:
@@ -11,6 +12,8 @@ class FaceWorkspace:
         return root if (root/'input.mp4').is_file() else None
 
     def face_job(self):
+        if not AVAILABLE:  # capture needs the Windows base runtime (Linux blacklist)
+            return None
         root = self.face_project()
         if root is None:
             return None

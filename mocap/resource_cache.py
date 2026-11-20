@@ -33,6 +33,7 @@ LOGGING_ONLY = {
 # peak-memory reporting): identical numerical paths and Windows behavior. These keep
 # identities shared with baseline ef05127 so saved work stays valid on either system.
 PLATFORM_ONLY = {
+    "f49bb0507881bd15f2ade38fa992fdcfe90b0e1bc3b6ee0f5a7ce9f7fd6bfb20": "883d9dde808cf27c86611cb85f0e28ffcb3541639d417d2f68c4c7e1b2d00855",
     "3dcbafa291041b312dc3a5ab2518da0b6004505308f77c53bf0a50f4432bb571": "883d9dde808cf27c86611cb85f0e28ffcb3541639d417d2f68c4c7e1b2d00855",
     "9fd216619f107e629ed72234b039ec86fe59308c994cc5628c6a9ae3e6a19758": "77c7162093f5bbf9b4dba46287f6542d5069cd3aef24444f531eac94335bd82f",
     "36960f608a6a498dfddf4628edc55cfa0b05fd23526f946777b3bed25dcc2b80": "b82861ea8496949c3b7d914a4b6eecf6400e61dcc008a188e2b7504c317a3012"

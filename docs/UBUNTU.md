@@ -11,6 +11,8 @@ This fork adds a Linux route beside the Windows Git/CMD distribution, for amd64 
 | MAMMA, PromptHMR | Not supported. Their setup builds Windows native modules and their adapters remain Windows-only. |
 | PEAR live preview | Not supported. Its shared camera frames use Windows named shared memory. |
 | GEM-X, SAM 3.1 tracker | Not supported. GEM-X is Windows-only by design; the SAM 3.1 overlay launches through the Windows ExMR runtime. |
+| Track Face capture | Not supported. Capture launches `runtime_exmr/python.exe` with the Windows x64 MediaPipe wheel lock (`installer/face-windows.lock`). |
+| Unreal Live Link / MetaHuman streaming | Not supported. The Live Link bridge is a Win64 module built by `Setup_UnrealStream.cmd`; `tools/setup_unreal_stream.py` refuses non-Windows systems. |
 
 On Linux the GUI hides the Windows-only models through the blacklist in
 `mocap/motion_tools.py` (`LINUX_UNAVAILABLE`: PEAR, MAMMA, PromptHMR, GEM-X,
@@ -18,6 +20,14 @@ plus the SAM 3.1 tracker entry in Find person). The model selector, the model
 guide and batch processing offer only GVHMR, FlowHMR and ExMR; existing project
 files that reference a hidden model remain readable, and Windows installs are
 unchanged.
+
+The same principle gates the 2026-11-20 upstream features: `face_runtime.AVAILABLE`
+is false on Linux, so the Track Face checkbox is hidden and `face_job()` never
+queues the `face_track` stage (`worker_command('face_track')` reports it as
+Linux-unavailable); the stream target combo drops the `Unreal Live Link` entry
+while `Blender` streaming stays. Viewing, neutral calibration and TXT / Live
+Link Face CSV export of an existing `face_capture.npz` (for example from a
+Windows install) remain cross-platform, and Windows installs are unchanged.
 
 ### Validation
 
@@ -283,7 +293,7 @@ Saved work stays valid because receipts still see baseline code identities:
 
 For the 2026-11-10/11 merge decisions, launcher compatibility lessons and validation limits, see [Upstream sync experience and workflow](UPSTREAM_SYNC.md).
 
-**Baseline:** `1b0384367fc6b63932c82f1c9c5cb4243a91de2e` (upstream `main` merged on 2026-11-10; original port baseline was `ef05127a0dbddb3f3ac672a0722dddeae42ea651`).
+**Baseline:** `76612b52e239f89598c23e40f9b3fe20152df0d6` (upstream `main` merged on 2026-11-20; earlier baselines were `1b0384367fc6b63932c82f1c9c5cb4243a91de2e` on 2026-11-10 and `ef05127a0dbddb3f3ac672a0722dddeae42ea651` originally).
 
 Keep the Linux layer small and additive, and merge rather than rebase so the identity reasoning stays reviewable against each upstream version:
 

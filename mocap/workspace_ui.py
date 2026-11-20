@@ -523,6 +523,9 @@ def build_workspace(w):
     w.track_face = QCheckBox('Track Face')
     w.track_face.setToolTip(tooltip_text('Track each checked person’s face with MediaPipe on CPU. First use downloads the optional runtime and model. Holds the last tracked expression through gaps.'))
     w.track_face.toggled.connect(w.track_face_toggled)
+    from .face_runtime import AVAILABLE as FACE_CAPTURE
+    if not FACE_CAPTURE:  # capture needs the Windows base runtime; Linux keeps archive viewing
+        w.track_face.hide()
     face_row = QHBoxLayout()
     face_row.addWidget(w.track_face, 1)
     w.set_neutral_face = QPushButton('Set Neutral')

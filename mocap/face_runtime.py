@@ -15,12 +15,19 @@ CANONICAL = ('https://raw.githubusercontent.com/google-ai-edge/mediapipe/v0.10.3
              '8bac80443397e113f41a8b565ea72c59390bc031d9defab289dba7bc0c54e618')
 LOCK = ROOT / 'installer/face-windows.lock'
 
+# Capture runs on the Windows base runtime (runtime_exmr/python.exe) with the
+# Windows x64 wheel lock above, so this fork hides Track Face on Linux. Reading
+# and exporting an existing face_capture.npz stays cross-platform.
+AVAILABLE = os.name == 'nt'
+
 
 def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
 def command(args):
+    if not AVAILABLE:
+        raise RuntimeError('Track Face capture requires the Windows base runtime and is unavailable on Linux.')
     python = ROOT / 'runtime_exmr/python.exe'
     if not python.is_file():
         raise RuntimeError('Run install.cmd to prepare the base runtime for Track Face.')

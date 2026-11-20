@@ -1,5 +1,8 @@
 """The Linux model blacklist: Windows-only models are hidden from the GUI.
 
+The 2026-11-20 upstream features are gated the same way: Track Face capture
+(Windows base runtime) and the Unreal Live Link stream target (Win64 bridge).
+
 QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest discover -s tools/tests -p test_linux_model_availability.py -v
 """
 import os
@@ -10,8 +13,10 @@ import unittest
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from mocap.face_runtime import AVAILABLE as FACE_CAPTURE_AVAILABLE
 from mocap.model_guide import guide_html
 from mocap.motion_tools import LINUX_UNAVAILABLE, MOTION_TOOLS, selectable_tools
+from mocap.paths import worker_command
 
 
 class Blacklist(unittest.TestCase):
@@ -80,6 +85,25 @@ class RealSelector(unittest.TestCase):
             self.skipTest('Windows keeps the SAM 3.1 tracker')
         trackers = {self.w.people_tracker.itemData(i) for i in range(self.w.people_tracker.count())}
         self.assertEqual(trackers, {'default'})
+
+    def test_track_face_hidden_and_capture_never_queued_on_linux(self):
+        if os.name == 'nt':
+            self.skipTest('Windows keeps Track Face capture')
+        self.assertFalse(FACE_CAPTURE_AVAILABLE)
+        self.assertTrue(self.w.track_face.isHidden())
+        self.assertIsNone(self.w.face_job())
+
+    def test_stream_target_drops_unreal_live_link_on_linux(self):
+        if os.name == 'nt':
+            self.skipTest('Windows keeps the Unreal Live Link target')
+        targets = [self.w.stream_target.itemText(i) for i in range(self.w.stream_target.count())]
+        self.assertEqual(targets, ['None', 'Blender'])
+
+    def test_face_track_command_reports_linux_unavailability(self):
+        if os.name == 'nt':
+            self.skipTest('Windows launches the face worker normally')
+        with self.assertRaisesRegex(RuntimeError, 'unavailable on Linux'):
+            worker_command('face_track')
 
     def test_blacklisted_project_model_still_opens(self):
         # The registry keeps Windows-only models readable for existing projects.

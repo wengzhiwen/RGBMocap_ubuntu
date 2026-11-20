@@ -581,7 +581,8 @@ class RealGuiIntegration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             saved = dict(folder=folder, format='bvh', bvh_profile='biped', prepend_tpose=True,
                          place_at_origin=True, symmetric_rest=True, preview=True,
-                         auto_people=True, people_limit=3, parallel_gpus=[])
+                         auto_people=True, people_limit=3, parallel_gpus=[],
+                         take_scope='current', export_face=False, face_format='txt', smooth_face=True)
             dialog = BatchExportDialog(self.w, saved)
             self.assertEqual(dialog.options(), saved)
             dialog.accept()
@@ -591,8 +592,10 @@ class RealGuiIntegration(unittest.TestCase):
     def test_fbx_compatibility_option_is_restored(self):
         with tempfile.TemporaryDirectory() as folder:
             saved = dict(folder=folder, format='fbx', bvh_profile='generic', prepend_tpose=False,
-                         fbx_compatibility=True, place_at_origin=True, symmetric_rest=True, preview=False,
-                         auto_people=False, people_limit=5, parallel_gpus=[])
+                         fbx_compatibility=True, fbx_profile='generic', fbx_rest_pose='t',
+                         place_at_origin=True, symmetric_rest=True, preview=False,
+                         auto_people=False, people_limit=5, parallel_gpus=[],
+                         take_scope='current', export_face=False, face_format='txt', smooth_face=True)
             dialog = BatchExportDialog(self.w, saved)
             self.assertEqual(dialog.options(), saved)
             dialog.deleteLater()

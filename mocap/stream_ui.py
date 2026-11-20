@@ -1,6 +1,7 @@
 """Stream the prepared offline motion without changing People visibility."""
 from hashlib import sha256
 import json
+import os
 from queue import Empty
 
 from PySide6.QtCore import QSignalBlocker, QTimer, Qt
@@ -23,7 +24,10 @@ class StreamWorkspace:
         column.setContentsMargins(5, 5, 5, 5)
         column.addWidget(QLabel('Target'))
         self.stream_target = QComboBox()
-        self.stream_target.addItems(['None', 'Blender', 'Unreal Live Link'])
+        targets = ['None', 'Blender']
+        if os.name == 'nt':  # the Live Link bridge is built by Setup_UnrealStream.cmd (Win64)
+            targets.append('Unreal Live Link')
+        self.stream_target.addItems(targets)
         self.stream_target.setAccessibleName('Stream target')
         column.addWidget(self.stream_target)
         self.stream_port_controls = QWidget()

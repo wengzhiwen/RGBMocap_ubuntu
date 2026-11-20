@@ -168,3 +168,51 @@ third_party 许可证中的分隔线误认为合并冲突。提交后检查工�
 入口兼容性修复可以作为独立提交同步到 main，但这与将整个上游同步分支
 合入 main 是两件事。不要为了推送而覆盖远程已有的新提交；本次新分支的
 合并提交曾补充遗漏文件并改写，后续优先用追加提交，保留可审查记录。
+
+## 9. 2026-11-20 同步（1b03843a → 76612b52）
+
+本次自上游 `main` 合并 21 个提交（122 个文件，约 9100 行新增），
+同步分支 `codex/sync-2026-11-20`，流程沿用上文与
+[Ubuntu 指南](UBUNTU.md#upstream-sync)。
+
+| 上游变化 | 同步时确认的边界 |
+| --- | --- |
+| Track Face 人脸跟踪、表情平滑、中性脸、Live Link Face CSV | 捕获固定走 `runtime_exmr/python.exe` 与 Windows x64 wheel 锁（`installer/face-windows.lock`）；Linux 加入功能黑名单（见下），归档查看 / 中性脸 / CSV 导出保持跨平台 |
+| UE5 Manny/Quinn Mannequin FBX 导出 | 跨平台 Python + `third_party/ue5_mannequin` 数据；随上游合入，未做 Linux 实测导出 |
+| Take 选择导出、导出诊断 | 跨平台；`SourceExportDialog.options()` 架构变化，本分支批量导出测试随之更新 |
+| Unreal Live Link / MetaHuman 串流、MetaHuman Connect 插件 | 桥接仅 Windows（`Setup_UnrealStream.cmd`、Win64 DLL receipt、setup 工具显式拒绝非 Windows）；Linux 串流目标下拉框隐藏该选项，Blender 目标不变 |
+| A/T 参考姿态、预览源音频、Blender 串流端口可调、Blender 打包合并 | 跨平台代码，随上游合入 |
+| 空脚部接触修复（上游含测试） | 跨平台；上游 `tests/` 四个新测试文件全部通过 |
+| SAM 3.1 CPU 卸载、MAMMA 相机预览恢复 | 沿用既有模型黑名单（Linux 隐藏），Windows 行为不变 |
+| worker.py 诊断改进 | 上游将自身新哈希登记进 `LOGGING_ONLY`；本分支合并后新哈希 `f49bb050…` 经 `PLATFORM_ONLY` 别名仍指向基线身份 `883d9dde…`，receipt 缓存不失效 |
+
+冲突仅 `README.md` 与 `mocap/gui.py` 两处：README 保留 Ubuntu 框架并新增
+"上游同步新增（2026-11-20）"章节；gui.py 同时保留本分支 `VideoBatchWorkspace`
+与上游 `FaceWorkspace`。`workspace_ui.py` 的函数内 `import os` 使 `os` 成为
+整个函数的局部名，平台判断改为直接 `from .face_runtime import AVAILABLE`，
+避免 UnboundLocalError。
+
+### 功能黑名单（本次新增）
+
+`face_runtime.AVAILABLE` 为 Linux 上的唯一事实来源：Track Face 复选框隐藏、
+`face_job()` 不再排队 `face_track`、`worker_command('face_track')` 报告
+Linux 不可用；串流目标仅保留 None/Blender。查看、中性脸校准与既有
+`face_capture.npz` 的 TXT / Live Link Face CSV 导出保持可用（例如复制自
+Windows 安装的项目），Windows 安装不受影响。
+
+### 验证记录（amd64 宿主机）
+
+- `tools/tests` 全套 285 项：新增 3 项平台黑名单测试后通过；唯一错误
+  `test_pp2_full_network…` 在合并前 `main` 上同样出现（全套顺序下的既有
+  问题，单跑通过），合并前 `main` 另有一项 `test_headless_broken_manual_people…`
+  失败在合并后转为通过。上游 `tests/` 新增 17 项全部通过。
+- `tools/check_source.py` 扫描 2746 个文件零错误；变更 Python 文件全部编译通过。
+- 离屏 GUI 实测启动：串流目标仅 `['None','Blender']`，Track Face 隐藏。
+- `rgbmocap-cli.sh doctor --gpu` 通过（3 GPU、三个运行时真实 CUDA 运算）；
+  `.venv-hand` / `.venv-htd` 缺失为该主机既有状态。
+- 451 帧既有项目 `ubuntu-full-flow/flowhmr` 以原参数重跑（`--camera-interval -1
+  --hamer --correct`）：全流程约 14 秒完成（全新推理需数分钟），HaMeR 阶段
+  报告 "Verified hand cache reused"，确认合并后代码身份与 receipt 一致；
+  修正与导出阶段按设计每次快速重算。
+- 新特性（UE5 Mannequin FBX、take 导出、A/T 姿态、预览音频、Blender 端口
+  修改与打包合并）未在 Linux 做产物级实测，按上表标注为"已合入未验证"。
