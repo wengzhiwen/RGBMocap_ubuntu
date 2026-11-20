@@ -18,9 +18,9 @@ On Linux hosts with `nvidia-smi`, the setup dialog also lists **Parallel GPUs**.
 Leave one or none checked for the ordinary sequential batch. Check two or more
 to process one video per GPU at the same time; the number of checked GPUs is
 the number of videos running concurrently. See *Parallel processing with
-multiple GPUs* below. Parallel runs cannot export the preview video, because
-preview capture renders through the shown workspace window; the option is
-disabled while two or more GPUs are checked.
+multiple GPUs* below. With two or more GPUs checked, **Export Preview Video**
+stays available: after the parallel reconstruction finishes, the main window
+renders the preview videos one after another.
 
 **Find people first; check the first N people** (default on, limit 3) runs the
 ordinary Find People discovery on every video before reconstruction and checks
@@ -89,7 +89,13 @@ and exports exactly like the sequential batch would for that video.
 
 Consequences of running one child per GPU:
 
-- Preview video export is unavailable; it needs the shown workspace window.
+- Preview videos are rendered by the parent after reconstruction: the headless
+  children cannot capture the OpenGL viewport, so once every child has
+  finished, the shown main window reopens each finished project in turn and
+  renders its `preview.mp4` exactly like the sequential batch would. A failed
+  preview marks that video failed and keeps its completed motion exports,
+  matching the sequential rule; cancelling during this pass keeps every
+  rendered preview.
 - Each child loads its own GUI copy and workers, so RAM use grows with the
   number of GPUs. Resource Safety stays per process: each child's monitor
   measures the same system RAM and stops only its own workers.

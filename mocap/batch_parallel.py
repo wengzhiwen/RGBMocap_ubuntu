@@ -11,8 +11,11 @@ from datetime import datetime
 from pathlib import Path
 import os
 import subprocess
+import time
 
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer
+
+PREVIEW_WAIT_SECONDS = 60
 
 from . import batch_protocol
 from .paths import ROOT
@@ -95,7 +98,6 @@ class ParallelVideoBatch(QObject):
         self.window = window
         self.videos = list(videos)
         self.options = deepcopy(options)
-        self.options['preview'] = False  # preview capture needs the shown window
         self.gpus = [dict(gpu) for gpu in gpus]
         self.child_command = child_command
         self.settings = deepcopy(window.workspace_settings())
@@ -287,10 +289,122 @@ class ParallelVideoBatch(QObject):
         completed = sum(r['status'] in ('done', 'failed', 'cancelled', 'skipped') for r in self.rows)
         self.dialog.overall.setValue(completed)
         self.save_report()
-        if not self.children and (self.next_index >= len(self.videos) or self.stopping):
+        if not self.children and self.next_index >= len(self.videos):
+            self._start_preview_pass()
+            return
+        if not self.children and self.stopping:
             self.finish()
             return
         self._dispatch()
+
+    def _start_preview_pass(self):
+        """Render preview videos sequentially in the shown parent window.
+
+        The parallel children are offscreen and cannot capture the OpenGL
+        viewport; after inference the parent replays each finished project and
+        renders its preview exactly like the sequential batch would.
+        """
+        self.preview_queue = ([index for index, row in enumerate(self.rows)
+                               if row['status'] == 'done' and row.get('project')]
+                              if self.options.get('preview') else [])
+        self.preview_position = 0
+        self.current_preview = None
+        self.preview_subphase = 'idle'
+        if not self.preview_queue:
+            self.finish()
+            return
+        self.phase = 'preview_pass'
+        self.preview_timer = QTimer(self)
+        self.preview_timer.setInterval(100)
+        self.preview_timer.timeout.connect(self._preview_tick)
+        self.preview_timer.start()
+        self._next_preview()
+
+    def _next_preview(self):
+        if self.preview_position >= len(self.preview_queue):
+            self.preview_timer.stop()
+            self.finish()
+            return
+        index = self.preview_queue[self.preview_position]
+        self.preview_position += 1
+        self.current_preview = index
+        self.preview_subphase = 'opening'
+        self.preview_started = time.monotonic()
+        row = self.rows[index]
+        self.dialog.summary.setText(
+            f'Preview {self.preview_position}/{len(self.preview_queue)} · {Path(row["video"]).name}')
+        self._set_status(index, 'preview', 'Rendering preview')
+        try:
+            opened = self.window.load_project(Path(row['project']))
+        except Exception as error:
+            opened = error
+        if opened is False or isinstance(opened, Exception):
+            self._preview_failed(str(opened))
+            return
+        self.save_report()
+
+    def _preview_tick(self):
+        w = self.window
+        if self.stopping:
+            preview = getattr(w, '_preview_export', None)
+            if preview is not None:
+                return  # its cancelled completion settles this pass
+            if not w.busy:
+                self.preview_timer.stop()
+                self.finish()
+            return
+        index = self.current_preview
+        if index is None:
+            return
+        try:
+            if self.preview_subphase == 'opening':
+                if w.preview_export_available():
+                    self.preview_subphase = 'rendering'
+                    controller = w.start_preview_export(
+                        self.folder / f'{index + 1:04d}-{self.videos[index].stem}' / 'preview.mp4',
+                        resume=False, progress_dialog=self.dialog)
+                    controller.completed.connect(self._preview_finished)
+                elif time.monotonic() - self.preview_started > PREVIEW_WAIT_SECONDS:
+                    self._preview_failed('Timed out waiting for the motion preview.')
+            elif self.preview_subphase == 'rendering':
+                self.dialog.progress.setRange(w.progress.minimum(), w.progress.maximum())
+                self.dialog.progress.setValue(w.progress.value())
+        except Exception as error:
+            self._preview_failed(str(error))
+
+    def _preview_finished(self, success, message, cancelled):
+        index = self.current_preview
+        if index is None or self.preview_subphase not in ('rendering', 'opening'):
+            return
+        if self.stopping:
+            return  # the cancelled export settles through the stopping tick
+        if success:
+            preview_path = self.folder / f'{index + 1:04d}-{self.videos[index].stem}' / 'preview.mp4'
+            self.rows[index]['exports'].append(str(preview_path))
+            self._set_status(index, 'done')
+            self.save_report()
+            self.current_preview = None
+            QTimer.singleShot(0, self._next_preview)
+        else:
+            self._preview_failed(message if not cancelled else 'Preview export was cancelled.')
+
+    def _preview_failed(self, message):
+        index = self.current_preview
+        if index is None:
+            return
+        if self.stopping:
+            self.current_preview = None
+            return
+        # Same rule as the sequential batch: a failed preview marks the video
+        # failed while keeping its completed motion exports.
+        row = self.rows[index]
+        row['status'] = 'failed'
+        row['error'] = message
+        self._set_status(index, 'failed', 'Failed: ' + message)
+        self.window.log.append(f'Batch preview {index + 1}: {self.videos[index]}\n{message}')
+        self.current_preview = None
+        self.save_report()
+        QTimer.singleShot(0, self._next_preview)
 
     def cancel(self):
         if self.stopping or self.phase == 'finished':
@@ -300,6 +414,9 @@ class ParallelVideoBatch(QObject):
         self.dialog.label.setText('Stopping batch...')
         for index in getattr(self.dialog, 'gpu_rows', {}):
             self.dialog.set_gpu_status(index, f'GPU {index} · stopping...')
+        preview = getattr(self.window, '_preview_export', None)
+        if preview is not None:
+            preview.cancel()
         for record in self.children.values():
             process = record['process']
             if process.state() != QProcess.NotRunning:
@@ -310,6 +427,9 @@ class ParallelVideoBatch(QObject):
     def finish(self):
         if self.phase == 'finished':
             return
+        timer = getattr(self, 'preview_timer', None)
+        if timer is not None:
+            timer.stop()
         if self.stopping:
             for i, row in enumerate(self.rows):
                 if row['status'] not in ('done', 'failed', 'cancelled'):

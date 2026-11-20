@@ -204,3 +204,27 @@ than the GPU count on real GPUs (dynamic re-dispatch was exercised only with
 stub children), more than two concurrent children, longer clips, preview video
 in parallel mode (disabled by design), numerical parity between parallel and
 sequential runs of the same video, and any Windows behavior.
+
+## Parallel preview pass — 2026-11-20
+
+Follow-up to the multi-GPU parallel batch: preview videos are now supported in
+parallel runs. The offscreen children cannot capture the OpenGL viewport (the
+software-raster MotionView draws the scene furniture, but body meshes and export
+bones are GL-only), so `ParallelVideoBatch` gained a parent-side pass: after the
+last child finishes, the shown main window opens each finished project through
+the ordinary `load_project` path and renders its `preview.mp4` with the regular
+preview exporter; a failed preview marks the video failed while keeping its
+motion exports, and cancelling keeps every rendered preview.
+
+Actually run: `tools/tests/test_batch_parallel.py` — 25 tests passed, including
+two new ones driving the preview pass end to end with stub children (sequential
+`load_project` order, `preview.mp4` recorded in exports and report, and the
+failed-preview rule). `test_video_batch_ui.py` (34) and
+`test_linux_model_availability.py` (8) stayed green; the full `tools/tests`
+suite again showed only the pre-existing `test_flow_parallel` full-network
+error that also reproduces on the clean tree.
+
+Not established by these checks: a real preview render inside an actual
+parallel run on the GPUs (the stub children write no motion data), preview
+content parity between parallel and sequential runs, and multi-person people
+workspaces reopening during the pass.

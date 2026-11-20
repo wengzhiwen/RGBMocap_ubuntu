@@ -394,7 +394,8 @@ the first in the workspace, then choose **Setup Export...** and click
 are recorded and processing continues. Batch export can run Find People on every
 video and check the first people automatically, so multi-actor videos export one
 motion file per person. On Linux, checking two or more GPUs in the setup dialog
-processes one video per GPU in parallel; parallel runs skip the preview video.
+processes one video per GPU in parallel; preview videos are then rendered
+sequentially in the main window after reconstruction.
 See [batch workflow and output details](BATCH_PROCESSING.md).
 
 ## Choose a model

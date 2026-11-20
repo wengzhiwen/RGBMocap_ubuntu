@@ -17,7 +17,7 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 try:
-    from PySide6.QtCore import QTimer
+    from PySide6.QtCore import QObject, QTimer, Signal
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QLabel, QProgressBar, QWidget
     from mocap import batch_parallel, batch_protocol
@@ -55,6 +55,17 @@ def completed(result, code):
 
 
 if HAS_QT:
+    class FakePreviewController(QObject):
+        completed = Signal(bool, str, bool)
+
+        def __init__(self):
+            super().__init__()
+            self.done = False
+            self.path = None
+
+        def cancel(self):
+            pass
+
     class FakeParallelWindow(QWidget):
         """The subset of MainWindow the parallel controller touches."""
 
@@ -84,8 +95,30 @@ if HAS_QT:
             self.progress = QProgressBar()
             self.log = SimpleNamespace(append=Mock())
             self._video_batch = None
+            self._preview_export = None
+            self.project = None
+            self.ready_for_preview = False
+            self.last_preview = None
+            self.load_project = Mock(side_effect=self.open_project)
+            self.start_preview_export = Mock(side_effect=self.preview_start)
             self.update_readiness = Mock()
             self.stop_playback = Mock()
+
+        def open_project(self, path):
+            self.project = path
+            self.ready_for_preview = True
+            self._preview_export = None
+            self.last_preview = None
+
+        def preview_start(self, path, **kwargs):
+            controller = FakePreviewController()
+            controller.path = path
+            self.last_preview = controller
+            self._preview_export = controller
+            return controller
+
+        def preview_export_available(self):
+            return self.ready_for_preview and self._preview_export is None
 
         def workspace_settings(self):
             return self.settings
@@ -201,7 +234,7 @@ class DialogWiring(unittest.TestCase):
         self.addCleanup(dialog.deleteLater)
         return dialog
 
-    def test_two_checked_gpus_enable_parallel_and_disable_preview(self):
+    def test_two_checked_gpus_keep_preview_with_sequential_note(self):
         gpus = [dict(index=0, uuid='GPU-a', name='A', memory_mib=24576),
                 dict(index=1, uuid='GPU-b', name='B', memory_mib=24576),
                 dict(index=2, uuid='GPU-c', name='C', memory_mib=8188)]
@@ -210,10 +243,11 @@ class DialogWiring(unittest.TestCase):
         boxes = [box for _, box in dialog.gpu_boxes]
         boxes[0].setChecked(True)
         boxes[1].setChecked(True)
-        self.assertFalse(dialog.preview.isEnabled())
-        self.assertFalse(dialog.preview.isChecked())
+        self.assertTrue(dialog.preview.isEnabled())
+        self.assertTrue(dialog.preview.isChecked())
         selected = dialog.options()['parallel_gpus']
         self.assertEqual([g['uuid'] for g in selected], ['GPU-a', 'GPU-b'])
+        self.assertIn('preview videos sequentially in the main window', dialog.parallel_note.text())
         self.assertNotIn('watch RAM headroom', dialog.parallel_note.text())
         boxes[2].setChecked(True)
         self.assertIn('watch RAM headroom', dialog.parallel_note.text())
@@ -267,7 +301,7 @@ class ParallelOrchestration(unittest.TestCase):
         self.w.close()
         self.temp.cleanup()
 
-    def make_controller(self, videos, scenarios, gpus=None):
+    def make_controller(self, videos, scenarios, gpus=None, preview=False):
         gpus = gpus or [dict(index=0, uuid='GPU-a', name='A'),
                         dict(index=1, uuid='GPU-b', name='B')]
         scenarios = list(scenarios) + ['ok'] * (len(videos) - len(scenarios))
@@ -276,11 +310,25 @@ class ParallelOrchestration(unittest.TestCase):
             scenario = scenarios[int(request['number']) - 1]
             return [sys.executable, '-I', '-B', str(STUB),
                     '--request', str(request_path), '--scenario', scenario]
-        options = dict(folder=str(self.root), format='fbx', preview=True, auto_people=False)
+        options = dict(folder=str(self.root), format='fbx', preview=preview, auto_people=False)
         self.controller = batch_parallel.ParallelVideoBatch(
             self.w, videos, options, gpus, child_command=command)
         self.w._video_batch = self.controller
         return self.controller
+
+    def drive_previews(self, controller, success=True, message=''):
+        """Complete every preview the parent window starts during the pass."""
+        handled = 0
+        deadline = time.monotonic() + 20
+        while controller.phase != 'finished' and time.monotonic() < deadline:
+            QTest.qWait(50)
+            fake = self.w.last_preview
+            if fake is not None and not fake.done:
+                fake.done = True
+                fake.completed.emit(success, message, False)
+                self.w._preview_export = None
+                handled += 1
+        return handled
 
     def test_two_gpus_finish_all_videos_and_write_merged_report(self):
         controller = self.make_controller(self.videos[:2], ['ok', 'ok'])
@@ -300,6 +348,35 @@ class ParallelOrchestration(unittest.TestCase):
         self.assertEqual([g['uuid'] for g in report['parallel']['gpus']], ['GPU-a', 'GPU-b'])
         self.assertFalse(report['export']['preview'])
         self.assertIsNone(self.w._video_batch)
+
+    def test_preview_pass_renders_previews_sequentially_in_the_parent(self):
+        controller = self.make_controller(self.videos[:2], ['ok', 'ok'], preview=True)
+        controller.start()
+        handled = self.drive_previews(controller)
+        self.assertEqual(handled, 2)
+        self.assertEqual(controller.phase, 'finished')
+        self.assertEqual([r['status'] for r in controller.rows], ['done', 'done'])
+        for index, name in enumerate(('0001-one', '0002-two')):
+            self.assertIn(str(controller.folder / name / 'preview.mp4'),
+                          controller.rows[index]['exports'])
+        # The parent opened each finished project in turn, in queue order.
+        self.assertEqual(self.w.load_project.call_count, 2)
+        report = json.loads((controller.folder / 'batch-report.json').read_text(encoding='utf-8'))
+        self.assertTrue(report['export']['preview'])
+        self.assertIsNone(self.w._video_batch)
+
+    def test_failed_preview_marks_the_row_failed_and_keeps_exports(self):
+        controller = self.make_controller(self.videos[:2], ['ok', 'ok'], preview=True)
+        controller.start()
+        handled = self.drive_previews(controller, success=False, message='encoder failed')
+        self.assertEqual(handled, 2)
+        self.assertEqual([r['status'] for r in controller.rows], ['failed', 'failed'])
+        self.assertEqual(controller.rows[0]['error'], 'encoder failed')
+        # The completed motion exports remain attached to the failed rows.
+        self.assertIn(str(controller.folder / '0001-one' / 'motion.fbx'),
+                      controller.rows[0]['exports'])
+        self.assertNotIn(str(controller.folder / '0001-one' / 'preview.mp4'),
+                         controller.rows[0]['exports'])
 
     def test_crashed_child_fails_the_row_and_dispatch_continues(self):
         controller = self.make_controller(self.videos, ['crash', 'ok', 'ok'])

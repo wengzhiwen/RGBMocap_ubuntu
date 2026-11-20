@@ -151,16 +151,16 @@ class BatchExportDialog(SourceExportDialog):
     def sync_parallel(self):
         count = sum(box.isChecked() for _, box in self.gpu_boxes)
         parallel = count >= 2
-        if parallel:
-            self.preview.setChecked(False)
-        self.preview.setEnabled(not parallel)
-        self.preview.setToolTip('' if not parallel else tooltip_text(
-            'Preview export is unavailable in parallel mode; it needs the shown window.'))
+        self.preview.setToolTip(tooltip_text(
+            'Also save the input video beside the current 3D viewport as MP4.'
+            + (' In parallel runs the preview videos are rendered sequentially in the main window after reconstruction.'
+               if parallel else '')))
         if self.parallel_note is not None:
             self.parallel_note.setText(
                 'Check two or more to process one video per GPU in parallel. '
-                'Parallel runs skip the preview video export.'
-                + (' Each parallel copy also loads its own GUI and workers; watch RAM headroom.'
+                + ('Parallel runs render preview videos sequentially in the main window after reconstruction. '
+                   if parallel else '')
+                + ('Each parallel copy also loads its own GUI and workers; watch RAM headroom.'
                    if count > 2 else ''))
             self.parallel_note.setMinimumHeight(_wrapped_height(self.parallel_note, 568))
 
