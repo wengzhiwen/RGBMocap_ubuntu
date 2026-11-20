@@ -10,6 +10,14 @@ This fork adds a Linux route beside the Windows Git/CMD distribution, for amd64 
 | ExMR, GVHMR and add-ons (HTD, FootMR, HandFlow) | Routed to their own environments; not yet verified end to end. |
 | MAMMA, PromptHMR | Not supported. Their setup builds Windows native modules and their adapters remain Windows-only. |
 | PEAR live preview | Not supported. Its shared camera frames use Windows named shared memory. |
+| GEM-X, SAM 3.1 tracker | Not supported. GEM-X is Windows-only by design; the SAM 3.1 overlay launches through the Windows ExMR runtime. |
+
+On Linux the GUI hides the Windows-only models through the blacklist in
+`mocap/motion_tools.py` (`LINUX_UNAVAILABLE`: PEAR, MAMMA, PromptHMR, GEM-X,
+plus the SAM 3.1 tracker entry in Find person). The model selector, the model
+guide and batch processing offer only GVHMR, FlowHMR and ExMR; existing project
+files that reference a hidden model remain readable, and Windows installs are
+unchanged.
 
 ### Validation
 

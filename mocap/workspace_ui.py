@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QWidget, QFrame, QLabel, QPushButton, QComboBox, 
     QSpinBox, QDoubleSpinBox, QProgressBar, QTextEdit, QMessageBox, QSizePolicy, QStackedWidget)
 from .viewer import VideoView, MotionView
 from .timeline import TimelineSlider
-from .motion_tools import MOTION_TOOLS
+from .motion_tools import MOTION_TOOLS, selectable_tools
 from .paths import ROOT
 from .correction_settings import PRESETS
 from .sidebar_scroll import SettingsScrollArea
@@ -324,7 +324,7 @@ def build_workspace(w):
     selector = group("AI Motion Model", content_layout)
     w.model_choice = QComboBox()
     w.model_choice.setToolTip(tooltip_text('Choose the AI model used to create motion. Open Model Guide for a comparison.'))
-    for tool in MOTION_TOOLS.values():
+    for tool in selectable_tools().values():
         w.model_choice.addItem(tool.label, tool.key)
     w.model_choice.setCurrentIndex(w.model_choice.findData('exmr'))
     w.model_choice.setItemData(w.model_choice.findData('gvhmr'), tooltip_text('GVHMR: body tracking with optional hand and foot refinement. Sometimes better for unusual poses such as backflips in our subjective tests.'), Qt.ToolTipRole)

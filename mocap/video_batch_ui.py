@@ -3,6 +3,7 @@ from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 import json
+import os
 import time
 
 from PySide6.QtCore import QObject, QTimer, Qt, Signal
@@ -13,8 +14,11 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QFileDialog, QF
 from .source_export_dialog import SourceExportDialog
 from .storage import atomic_json
 from .tooltips import tooltip_text
+from .motion_tools import LINUX_UNAVAILABLE
 
 BATCH_MODELS = frozenset(('exmr', 'flowhmr', 'gvhmr', 'prompthmr'))
+if os.name != 'nt':  # PromptHMR stays a Windows-only batch model
+    BATCH_MODELS = BATCH_MODELS - LINUX_UNAVAILABLE
 # Find People discovery applies to the models whose pipeline consumes the
 # per-person workspace; PromptHMR tracks its own people inside its pipeline.
 PEOPLE_BATCH_MODELS = frozenset(('exmr', 'flowhmr', 'gvhmr'))

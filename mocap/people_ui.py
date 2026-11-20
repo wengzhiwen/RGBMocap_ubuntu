@@ -3,6 +3,7 @@ from __future__ import annotations
 from .tooltips import tooltip_text
 from .ui_refresh import batch_readiness
 import json
+import os
 from collections import OrderedDict
 from pathlib import Path
 
@@ -304,7 +305,8 @@ class PeopleWorkspace:
         self.people_tracker = QComboBox()
         self.people_tracker.setAccessibleName('Person tracking model')
         self.people_tracker.addItem('Default', 'default')
-        self.people_tracker.addItem('SAM 3.1', 'sam31')
+        if os.name == 'nt':  # the SAM 3.1 overlay runs on the Windows ExMR runtime
+            self.people_tracker.addItem('SAM 3.1', 'sam31')
         self.people_tracker.setToolTip('Choose the person tracker used by Find person.')
         self._sam31_prompt = 'person'
         bar.addWidget(self.find_person_button)

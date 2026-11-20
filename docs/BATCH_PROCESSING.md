@@ -69,7 +69,8 @@ marked skipped. Re-running uses the ordinary valid-stage reuse rules and creates
 a new export directory. Opening a video or project through File leaves batch mode.
 
 Batch processing supports the offline single-video models (ExMR, FlowHMR,
-GVHMR and PromptHMR where its runtime is supported). MAMMA's synchronized camera
+GVHMR, and PromptHMR where its runtime is supported — the Linux blacklist
+hides PromptHMR there). MAMMA's synchronized camera
 set is one multi-view performance and keeps its separate input workflow. PEAR
 remains a live preview. The batch menu is disabled for both of those tools.
 GEM-X keeps its separate single-video reconstruction and export workflow.

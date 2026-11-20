@@ -1,6 +1,7 @@
 """Available motion tools and their compatible optional processing stages."""
 from dataclasses import dataclass
 import json
+import os
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,23 @@ MOTION_TOOLS = {"pear": MotionTool("pear", "PEAR · Live (Experimental)", (), li
 
 class UnsupportedMotionTool(ValueError):
     pass
+
+
+# Models whose runtimes cannot run on Linux in this fork: GEM-X is blocked by
+# design, MAMMA and PromptHMR build Windows-native CUDA modules through their
+# CMD setup flows, and PEAR live capture needs Windows named shared memory plus
+# the install.cmd overlay. They are hidden from the Linux GUI; MOTION_TOOLS and
+# existing project files that reference them keep working unchanged.
+LINUX_UNAVAILABLE = frozenset(('pear', 'mamma', 'prompthmr', 'gemx'))
+
+
+def selectable_tools(platform=None):
+    """The motion-tool entries the GUI offers on the given platform."""
+    tools = dict(MOTION_TOOLS)
+    if (platform or os.name) != 'nt':
+        for key in LINUX_UNAVAILABLE:
+            tools.pop(key, None)
+    return tools
 
 
 def require_supported_tool(model):

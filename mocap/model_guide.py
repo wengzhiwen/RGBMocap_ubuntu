@@ -2,7 +2,7 @@
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QDesktopServices, QTextOption
 from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QPushButton, QTextBrowser, QVBoxLayout
-from .motion_tools import MOTION_TOOLS
+from .motion_tools import MOTION_TOOLS, selectable_tools
 
 # exmr-eval-2026-10-22/summary-body.json, clip_01 (210 frames at 30 fps).
 # Historical processing-only runs; FlowHMR predates Fast SAM.
@@ -42,31 +42,27 @@ DESCRIPTIONS['flowhmr'] += (' Optional HaMeR Finger Refinement aims to improve f
 
 
 def guide_html(selected):
+    # Windows-only models stay documented but are not offered on Linux.
+    tools = selectable_tools()
     descriptions = ''.join(
         f'<p><b>{tool.label}</b> &nbsp; <a href="{PROJECT_URLS[key]}">Original project</a><br>'
-        f'{DESCRIPTIONS[key]}</p>' for key, tool in MOTION_TOOLS.items())
+        f'{DESCRIPTIONS[key]}</p>' for key, tool in tools.items())
     rows = ''.join(
         ('<tr bgcolor="#303f50">' if key == selected else '<tr>') +
-        f'<td><b>{MOTION_TOOLS[key].label}</b></td>' +
+        f'<td><b>{tools[key].label}</b></td>' +
         ''.join(f'<td>{value}</td>' for value in values) + '</tr>'
-        for key, values in BENCHMARKS.items())
-    return """<html><head><style>
-body { font-size:12px; } h3 { margin-top:15px; } a { color:#8ed2ff; }
-th { text-align:left; background-color:#333333; } td, th { padding:7px; }
-</style></head><body>
-<h3>Choosing a model</h3>
-<p>These are subjective observations from our test videos, not a universal ranking or accuracy benchmark.
-Try another model if a particular movement looks wrong.</p>""" + descriptions + """
-<p><b>Find person</b> offers optional SAM 3.1 tracking for ExMR, FlowHMR and GVHMR. Start with the <code>person</code> prompt and optionally click people in the marking preview to keep their tracks. Run Setup_SAM31.cmd once and prepare the public FP16 weights in Model Manager. See docs/models/SAM31.md.</p>
-<p>File &gt; Export offers FBX, BVH and portable Blender projects for SMPL source motion. MAMMA also offers a whole-scene Blender bundle. GEM-X offers Native77 FBX, BVH and Blender exports. Keep exported video/mesh folders together.</p>
-<p><b>Resource Safety</b> defaults on below Resource Mode. On retains low-RAM stopping and the PyTorch VRAM allocation limit. Off bypasses these limits; Automatic batching, supported Low Memory paths and actual allocation-error handling remain. The preference is saved locally, separately from projects. PEAR inherits it while its offline resource controls are hidden. See docs/PERFORMANCE.md for details.</p>
-<h3>Recorded processing time and memory</h3>
-<table width="98%" border="0" cellspacing="1" cellpadding="7">
-<tr><th>Model</th><th>Input</th><th>Processing time</th><th>Peak VRAM (GiB)</th><th>Peak RAM (GiB)</th></tr>""" + rows + """</table>
-<p>Test PC: RTX 5090 32 GB · Ryzen 9 9950X · 96 GB RAM.</p>
-<p>GVHMR: HTD + FootMR + HandFlow on. FlowHMR: original SAM; today's Fast SAM can
-be faster. These three models used the same seven-second clip; their times exclude
-tracking, app correction and preview/export.</p>
+        for key, values in BENCHMARKS.items() if key in tools)
+    linux = 'mamma' not in tools
+    sam31_note = '' if linux else """
+<p><b>Find person</b> offers optional SAM 3.1 tracking for ExMR, FlowHMR and GVHMR. Start with the <code>person</code> prompt and optionally click people in the marking preview to keep their tracks. Run Setup_SAM31.cmd once and prepare the public FP16 weights in Model Manager. See docs/models/SAM31.md.</p>"""
+    export_note = """<p>File &gt; Export offers FBX, BVH and portable Blender projects for SMPL source motion. Keep exported video/mesh folders together.</p>""" if linux else """
+<p>File &gt; Export offers FBX, BVH and portable Blender projects for SMPL source motion. MAMMA also offers a whole-scene Blender bundle. GEM-X offers Native77 FBX, BVH and Blender exports. Keep exported video/mesh folders together.</p>"""
+    safety_note = """<p><b>Resource Safety</b> defaults on below Resource Mode. On retains low-RAM stopping and the PyTorch VRAM allocation limit. Off bypasses these limits; Automatic batching, supported Low Memory paths and actual allocation-error handling remain. The preference is saved locally, separately from projects. See docs/PERFORMANCE.md for details.</p>""" if linux else """
+<p><b>Resource Safety</b> defaults on below Resource Mode. On retains low-RAM stopping and the PyTorch VRAM allocation limit. Off bypasses these limits; Automatic batching, supported Low Memory paths and actual allocation-error handling remain. The preference is saved locally, separately from projects. PEAR inherits it while its offline resource controls are hidden. See docs/PERFORMANCE.md for details.</p>"""
+    measurement_notes = """
+<p>VRAM is peak PyTorch allocated memory, not total GPU usage. ExMR/FlowHMR/GVHMR RAM is
+peak private memory. The older measurements predate the latest Low Memory changes. These are
+not minimum requirements. Results vary by input and PC.</p>""" if linux else """
 <p>MAMMA used a different clip: three synchronized videos resized within 1920×1080,
 two people and 413 frames at 30 fps. Its time includes preparation, correction and preview;
 memory covers masks, landmarks, VGGT and 3D fitting. This is not a direct speed comparison.
@@ -82,7 +78,21 @@ Its peak reserved CUDA memory was 7.83 GiB. It used a different clip from the ol
 <p>VRAM is peak PyTorch allocated memory, not total GPU usage. ExMR/FlowHMR/GVHMR RAM is
 peak private memory; MAMMA/PromptHMR RAM is peak worker working set. The older four-model
 measurements predate the latest Low Memory changes. These are not minimum requirements.
-Results vary by input and PC.</p>
+Results vary by input and PC.</p>"""
+    return """<html><head><style>
+body { font-size:12px; } h3 { margin-top:15px; } a { color:#8ed2ff; }
+th { text-align:left; background-color:#333333; } td, th { padding:7px; }
+</style></head><body>
+<h3>Choosing a model</h3>
+<p>These are subjective observations from our test videos, not a universal ranking or accuracy benchmark.
+Try another model if a particular movement looks wrong.</p>""" + descriptions + sam31_note + export_note + safety_note + """
+<h3>Recorded processing time and memory</h3>
+<table width="98%" border="0" cellspacing="1" cellpadding="7">
+<tr><th>Model</th><th>Input</th><th>Processing time</th><th>Peak VRAM (GiB)</th><th>Peak RAM (GiB)</th></tr>""" + rows + """</table>
+<p>Test PC: RTX 5090 32 GB · Ryzen 9 9950X · 96 GB RAM.</p>
+<p>GVHMR: HTD + FootMR + HandFlow on. FlowHMR: original SAM; today's Fast SAM can
+be faster. These three models used the same seven-second clip; their times exclude
+tracking, app correction and preview/export.</p>""" + measurement_notes + """
 <p>Offline reconstruction models offer Motion Correction for foot and hand contacts. It reduces sliding after pose estimation.</p></body></html>"""
 
 
