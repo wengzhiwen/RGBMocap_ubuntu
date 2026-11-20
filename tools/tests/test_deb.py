@@ -23,6 +23,7 @@ class Packaging(unittest.TestCase):
     def test_only_public_source_and_licenses(self):
         paths = {str(p) for p in build_deb.selected_sources()}
         for required in ('mocap/gui.py', 'mocap/video_batch_ui.py', 'mocap/runtime_registry.py',
+                         'mocap/batch_protocol.py', 'mocap/batch_child.py', 'mocap/batch_parallel.py',
                          'installer/linux-aarch64.json', 'tools/setup_ubuntu.py',
                          'packaging/debian/launcher.py', 'LICENSE', 'THIRD_PARTY_NOTICES.md'):
             self.assertIn(required, paths)

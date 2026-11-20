@@ -393,7 +393,9 @@ the first in the workspace, then choose **Setup Export...** and click
 **Reconstruct 3D (N)**. The modal progress window supports cancellation; failures
 are recorded and processing continues. Batch export can run Find People on every
 video and check the first people automatically, so multi-actor videos export one
-motion file per person. See [batch workflow and output details](BATCH_PROCESSING.md).
+motion file per person. On Linux, checking two or more GPUs in the setup dialog
+processes one video per GPU in parallel; parallel runs skip the preview video.
+See [batch workflow and output details](BATCH_PROCESSING.md).
 
 ## Choose a model
 

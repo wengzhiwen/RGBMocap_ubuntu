@@ -178,3 +178,29 @@ checks do not establish character retargeting or Blender compatibility on ARM64.
 - Configuring baseline and new `CMakeLists.txt` for an x86_64 target, using this machine's GCC, produced identical compile flags, definitions and include paths for both targets and fetched no `sse2neon`. No x86 module was compiled on this machine.
 
 Subsequent integration on GB10 passed installation, `doctor --gpu`, a 16-frame preparation/tracking run and native correction comparisons. The 102-test suite passed on amd64 and GB10, with platform/pin-specific skips; the compiled ARM intrinsic test was separately run successfully on GB10. A repeated amd64 FlowHMR + HaMeR command reused its caches after the architecture changes. Full GB10 SAM/HaMeR inference and real-display GUI testing remain pending; see [Spark validation](SPARK_VALIDATION.md).
+
+## Multi-GPU parallel video batch — 2026-11-20
+
+On the two-RTX-PRO-4000 amd64 host (three NVIDIA GPUs, driver 595.99.02), with
+the other resident GPU service stopped for the duration of the run and restarted
+afterwards. The parallel batch feature adds a "Parallel GPUs" group to the batch
+export dialog; each checked GPU runs one headless `app.py --batch-child` copy of
+the application per video.
+
+Actually run:
+
+- `QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest discover -s tools/tests -p test_video_batch_ui.py` — 34 tests passed (29 pre-existing plus 5 new headless-lifecycle tests). `tools/tests/test_batch_parallel.py` — 23 tests passed: protocol round-trips and exit-code mapping, nvidia-smi parsing and `CUDA_VISIBLE_DEVICES` translation, dialog wiring (parallel disables preview, RAM note above two GPUs, enumeration failure hides the group), stub-child orchestration (merged report with per-video GPU, crash and recorded-failure rows continue the batch, cancel semantics, and overlap-marker proof that concurrency equals the number of selected GPUs), routing, and `run_child` end to end with a fake window.
+- The full `tools/tests` suite ran 272 tests with one error in `test_flow_parallel.FlowParallel.test_pp2_full_network_preserves_output_and_padding`; that error reproduces on the clean tree before these changes and is unrelated to them. Two skips are the usual platform-conditional ones. `tools/check_source.py` reported 2,680 files and zero errors. `./rgbmocap-cli.sh doctor --gpu` passed, running real CUDA matmul and NMS in the shared, flow and exmr environments.
+- Real dual-GPU run: a driver script (kept outside the repository, in `/tmp`) constructed the real `MainWindow` offscreen, selected FlowHMR, and started `start_video_batch` with both 24 GB GPUs checked and two 16-frame clips copied to fresh paths so no stage cache applied. `nvidia-smi` showed two separate child processes, one pinned to each RTX PRO 4000 (3,752 and 3,816 MiB), running at the same time. Both videos completed in 59.8 s wall: one `motion.fbx` (about 174 KB) per video under `Batch_<timestamp>/000N-<stem>/`, per-video `child-request.json`/`child-result.json`, and one merged `batch-report.json` whose rows record `gpu` and whose `parallel.gpus` lists both UUIDs. No child processes or GPU memory remained afterwards, and `config/local.json` was not created or written.
+
+The driver script itself exited with SIGABRT during its own teardown after
+printing VALIDATION PASSED, because it omitted the `aboutToQuit →
+shutdown_preview` connection that the real `app.py` entry always makes; the
+application code path is unaffected.
+
+Not established by these checks: parallel runs with Find People/auto person
+selection on real GPUs, ExMR, GVHMR or PromptHMR in parallel mode, queues longer
+than the GPU count on real GPUs (dynamic re-dispatch was exercised only with
+stub children), more than two concurrent children, longer clips, preview video
+in parallel mode (disabled by design), numerical parity between parallel and
+sequential runs of the same video, and any Windows behavior.

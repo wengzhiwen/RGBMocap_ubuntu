@@ -4,6 +4,9 @@ import argparse
 import sys
 from pathlib import Path
 
+# Isolated batch-child launches (-I) drop the script directory from sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 
 def main():
     from mocap.portable_startup import configure_portable_environment
@@ -20,7 +23,12 @@ def main():
     parser.add_argument("--smoke-camera-distance", type=float)
     parser.add_argument('--smoke-render-mode',choices=['raw','box','mixamo'],default='box',help=argparse.SUPPRESS)
     parser.add_argument('--smoke-bone-overlay',choices=['on','off'])
+    parser.add_argument('--batch-child', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.batch_child is not None:
+        # Headless single-video worker of a parallel GPU batch; no window is shown.
+        from mocap.batch_child import run_child
+        return run_child(args.batch_child)
     # Give Windows a stable app identity so the taskbar uses the app icon.
     if sys.platform == "win32":
         try:

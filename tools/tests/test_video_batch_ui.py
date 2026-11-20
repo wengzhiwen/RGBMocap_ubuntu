@@ -5,6 +5,7 @@ No inference, GPU work or user project writes.
 """
 import json
 import os
+from copy import deepcopy
 from pathlib import Path
 import sys
 import tempfile
@@ -19,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 try:
     from PySide6.QtCore import QObject, Qt, Signal
     from PySide6.QtWidgets import QApplication, QDialog, QLabel, QProgressBar, QWidget
+    from mocap import batch_protocol
     from mocap.video_batch_ui import BatchExportDialog, VideoBatch, trimmed_frames
     HAS_QT = True
 except ImportError:
@@ -429,6 +431,125 @@ class BatchLifecycle(unittest.TestCase):
 
 
 @unittest.skipUnless(HAS_QT, 'Requires the pinned GUI environment')
+@unittest.skipUnless(HAS_QT, 'Requires the pinned GUI environment')
+class HeadlessLifecycle(unittest.TestCase):
+    """The parallel-batch child path: no dialog, no batch folder, result signal."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.w = FakeWindow(self.root)
+        self.batch = None
+        self.results = []
+
+    def tearDown(self):
+        if self.batch:
+            self.batch.timer.stop()
+            self.batch.stopping = True
+            self.w.busy = False
+            self.w._preview_export = None
+            self.batch.finish()
+        self.app.processEvents()
+        self.w.close()
+        self.temp.cleanup()
+
+    def make_headless(self, auto_people=False, **overrides):
+        self.w.video_readable = False  # a child window starts with nothing loaded
+        request = batch_protocol.build_request(
+            video=self.w.video_path, number=1, output_dir=self.root / 'out', model='flowhmr',
+            options=dict(format='fbx', preview=True, auto_people=auto_people),
+            settings=deepcopy(self.w.settings), background={}, trim=[1., 5.],
+            compute_mode='auto', resource_safety=True, manual_people=None,
+            gpu=dict(index=0, uuid='GPU-a', name='A'), result=self.root / 'child-result.json')
+        request.update(overrides)
+        (self.root / 'out').mkdir(exist_ok=True)
+        self.batch = VideoBatch(self.w, [Path(request['video'])],
+                                dict(format='fbx', preview=True, auto_people=auto_people),
+                                headless=request)
+        self.w._video_batch = self.batch
+        self.results = []
+        self.batch.child_result.connect(self.results.append)
+        self.batch.start()
+        self.batch.timer.stop()  # tests drive transitions explicitly
+        return self.batch
+
+    def settle(self, failed=False, cancelled=False, message='done'):
+        self.w.busy = False
+        self.batch.jobs_finished(failed, cancelled, message)
+
+    def test_headless_run_restores_request_state_and_emits_result(self):
+        b = self.make_headless()
+        self.assertIsNone(b.dialog)
+        self.assertIsNone(b.folder)
+        self.assertEqual(b.output, self.root / 'out')
+        self.assertFalse(b.options['preview'])
+        self.w.load_video.assert_called_once()
+        self.w.video_readable = True
+        b.tick()
+        self.assertEqual(b.phase, 'reconstructing')
+        self.assertTrue(self.w.settings['flow_options']['hamer'])  # from the request, not the window
+        self.assertEqual((self.w.slider.clip_in, self.w.slider.clip_out), (30, 150))
+        self.w.start_preview_export.assert_not_called()
+        self.settle()
+        self.settle()
+        self.app.processEvents()
+        self.assertEqual(len(self.results), 1)
+        self.assertTrue(self.results[0]['ok'])
+        self.assertEqual(self.results[0]['status'], 'done')
+        self.assertEqual(self.results[0]['exports'], [str(self.root / 'out' / 'motion.fbx')])
+        self.assertEqual(list(self.root.rglob('batch-report.json')), [])
+
+    def test_headless_manual_people_selection_is_restored(self):
+        people_root = self.root / 'people-root'
+        people_root.mkdir()
+        (people_root / 'project.json').write_text('{}', encoding='utf-8')
+        manual = dict(people_root=str(people_root),
+                      state=dict(people=[dict(id=1, name='A', checked=True)]))
+        with patch('mocap.models.missing', return_value=[]):
+            b = self.make_headless(auto_people=True, manual_people=manual)
+        self.w.video_readable = True
+        b.tick()
+        self.assertEqual(b.phase, 'reconstructing')
+        self.assertEqual(self.w.people_root, people_root)
+        self.assertEqual(self.w.people_state['people'][0]['checked'], True)
+        self.w.input_jobs.assert_not_called()
+        self.w.run_full_single.assert_called_once()
+
+    def test_headless_broken_manual_people_falls_back_to_discovery(self):
+        manual = dict(people_root=str(self.root / 'missing-root'),
+                      state=dict(people=[dict(id=1, name='A', checked=True)]))
+        with patch('mocap.models.missing', return_value=[]):
+            b = self.make_headless(auto_people=True, manual_people=manual)
+        self.w.video_readable = True
+        b.tick()
+        self.assertEqual(b.phase, 'finding_people')
+        self.w.input_jobs.assert_called_once()
+
+    def test_headless_failure_result(self):
+        b = self.make_headless()
+        self.w.video_readable = True
+        b.tick()
+        self.settle(failed=True, message='CUDA worker failed: sample error')
+        self.app.processEvents()
+        self.assertFalse(self.results[-1]['ok'])
+        self.assertEqual(self.results[-1]['status'], 'failed')
+        self.assertEqual(self.results[-1]['error'], 'CUDA worker failed: sample error')
+
+    def test_headless_cancel_result(self):
+        b = self.make_headless()
+        self.w.video_readable = True
+        b.tick()
+        b.cancel()
+        self.w.busy = False
+        b.tick()
+        self.assertEqual(self.results[-1]['status'], 'cancelled')
+        self.assertFalse(self.results[-1]['ok'])
+
+
 class RealGuiIntegration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -460,7 +581,7 @@ class RealGuiIntegration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             saved = dict(folder=folder, format='bvh', bvh_profile='biped', prepend_tpose=True,
                          place_at_origin=True, symmetric_rest=True, preview=True,
-                         auto_people=True, people_limit=3)
+                         auto_people=True, people_limit=3, parallel_gpus=[])
             dialog = BatchExportDialog(self.w, saved)
             self.assertEqual(dialog.options(), saved)
             dialog.accept()
@@ -471,7 +592,7 @@ class RealGuiIntegration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             saved = dict(folder=folder, format='fbx', bvh_profile='generic', prepend_tpose=False,
                          fbx_compatibility=True, place_at_origin=True, symmetric_rest=True, preview=False,
-                         auto_people=False, people_limit=5)
+                         auto_people=False, people_limit=5, parallel_gpus=[])
             dialog = BatchExportDialog(self.w, saved)
             self.assertEqual(dialog.options(), saved)
             dialog.deleteLater()

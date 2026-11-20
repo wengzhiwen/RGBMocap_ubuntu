@@ -14,6 +14,14 @@ This uses the existing preview exporter, including its frame pairing and audio.
 FBX compatibility for Maya, placement at the origin and symmetrical rest pose
 use the same options as individual source exports and are retained by batch setup.
 
+On Linux hosts with `nvidia-smi`, the setup dialog also lists **Parallel GPUs**.
+Leave one or none checked for the ordinary sequential batch. Check two or more
+to process one video per GPU at the same time; the number of checked GPUs is
+the number of videos running concurrently. See *Parallel processing with
+multiple GPUs* below. Parallel runs cannot export the preview video, because
+preview capture renders through the shown workspace window; the option is
+disabled while two or more GPUs are checked.
+
 **Find people first; check the first N people** (default on, limit 3) runs the
 ordinary Find People discovery on every video before reconstruction and checks
 the first N found people automatically, in first-appearance order. Each checked
@@ -30,8 +38,9 @@ interaction, shows each video's status and the active task, and offers
 **Cancel Batch**. Closing this window or pressing Escape during processing also
 requests cancellation. The summary remains open until you close it.
 
-Videos run sequentially: find people (when enabled), reconstruct, export motion,
-optionally export preview, then open the next video. The shared settings are
+Videos run sequentially unless two or more GPUs are checked for parallel
+processing: find people (when enabled), reconstruct, export motion, optionally
+export preview, then open the next video. The shared settings are
 captured when the batch starts. The first video's selected people/takes are
 retained when it already has a checked person; otherwise the first N found
 people are checked. Later videos follow the same automatic rule; identities and
@@ -65,13 +74,45 @@ set is one multi-view performance and keeps its separate input workflow. PEAR
 remains a live preview. The batch menu is disabled for both of those tools.
 GEM-X keeps its separate single-video reconstruction and export workflow.
 
+## Parallel processing with multiple GPUs
+
+With two or more GPUs checked in the setup dialog, the parent application
+launches one headless copy of itself per selected GPU
+(`QT_QPA_PLATFORM=offscreen`, `CUDA_VISIBLE_DEVICES=<GPU UUID>`) and hands each
+copy the next queued video as GPUs become free. Inside every child the ordinary
+sequential pipeline is unchanged: one worker at a time, the same multi-person
+batch workers, model sessions, precision and selected-result behavior. A child
+loads its video, applies the shared settings and trim, runs Find People when
+enabled (the first video keeps a recorded manual People selection), reconstructs
+and exports exactly like the sequential batch would for that video.
+
+Consequences of running one child per GPU:
+
+- Preview video export is unavailable; it needs the shown workspace window.
+- Each child loads its own GUI copy and workers, so RAM use grows with the
+  number of GPUs. Resource Safety stays per process: each child's monitor
+  measures the same system RAM and stops only its own workers.
+- The progress window adds a GPU column and one status line with its own
+  progress bar per selected GPU, and `batch-report.json` records the
+  GPU used per video plus the selected GPU list. Output folders, file naming
+  and the report layout are otherwise unchanged.
+- A crashed or failed child marks its video failed (with the child's log tail)
+  and the batch continues on the freed GPU. Cancel terminates the child process
+  trees; running videos are marked cancelled and undispatched ones skipped.
+- Model and settings requirements are identical to the sequential batch; the
+  child skips the startup preflight because the parent already ran it.
+
 Validation: `tools/tests/test_video_batch_ui.py` exercises the lifecycle with
 synthetic inputs and simulated worker/encoder completions, plus native Qt menu,
 dialog and job-completion integration. It also checks real decoding of a generated
-video after skipping a missing first input. Run it in the pinned GUI environment:
+video after skipping a missing first input. `tools/tests/test_batch_parallel.py`
+covers the child request/result protocol, GPU enumeration parsing, dialog wiring
+and the parallel dispatch, crash, cancel and bounded-concurrency behavior with
+scripted child processes. Run them in the pinned GUI environment:
 
 ```bash
 QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest discover -s tools/tests -p test_video_batch_ui.py -v
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest discover -s tools/tests -p test_batch_parallel.py -v
 ```
 
 These checks do not establish real-model inference, GPU rendering/MP4 capture,

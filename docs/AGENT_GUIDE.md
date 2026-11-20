@@ -30,7 +30,12 @@ It closes on completion/error; cancellation terminates the worker tree. Keep
 per-actor receipts and pending markers, separate runtimes, precision, full temporal
 context and optional add-on behavior intact. A fresh CUDA OOM recovery discards
 the cached model before its one supported Low Memory retry. Do not replace this
-with an indefinite global pool or parallel GPU workers.
+with an indefinite global pool or parallel GPU workers *within one video's
+pipeline*. The across-video GUI batch is a separate bounded layer: on Linux it
+may run one headless child process per user-selected GPU
+(`mocap/batch_parallel.py`), and each child still uses exactly this sequential,
+bounded worker machinery on its own GPU. Do not add worker pooling, shared GPU
+sessions or cross-video result coupling to that layer either.
 
 `mocap/batch_prefetch.py` overlaps CPU image preparation with inference using
 one producer thread and at most two prepared batches. Automatic enables it only

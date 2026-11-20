@@ -6,8 +6,9 @@ import json
 import time
 
 from PySide6.QtCore import QObject, QTimer, Qt, Signal
-from PySide6.QtWidgets import (QCheckBox, QDialog, QFileDialog, QHBoxLayout, QLabel,
-    QLineEdit, QMenu, QProgressBar, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QFileDialog, QFrame, QGroupBox,
+    QHBoxLayout, QLabel, QLineEdit, QMenu, QProgressBar, QPushButton, QScrollArea,
+    QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from .source_export_dialog import SourceExportDialog
 from .storage import atomic_json
@@ -17,6 +18,13 @@ BATCH_MODELS = frozenset(('exmr', 'flowhmr', 'gvhmr', 'prompthmr'))
 # Find People discovery applies to the models whose pipeline consumes the
 # per-person workspace; PromptHMR tracks its own people inside its pipeline.
 PEOPLE_BATCH_MODELS = frozenset(('exmr', 'flowhmr', 'gvhmr'))
+
+
+def _wrapped_height(label, width):
+    """Word-wrapped labels report one-line minimums; use their real wrapped height."""
+    height = label.heightForWidth(width)
+    hint = label.sizeHint().height()
+    return max(height, hint) if height >= 0 else hint
 
 
 class BatchExportDialog(SourceExportDialog):
@@ -61,8 +69,18 @@ class BatchExportDialog(SourceExportDialog):
                       '(ExMR, FlowHMR, GVHMR); a first video with a manual People selection keeps it. '
                       'PromptHMR uses its own people settings.')
         note.setWordWrap(True)
+        note.setMinimumHeight(_wrapped_height(note, 588))
         layout.addWidget(note)
-        self.layout().insertWidget(self.layout().count() - 1, panel)
+        self._build_parallel_group(saved, layout)
+        # The batch panel can exceed short screens; keep it scrollable then.
+        # The scroll area demands the panel's full height, so tall screens show
+        # everything without a scrollbar and only short screens scroll.
+        scroll = QScrollArea()
+        scroll.setWidget(panel)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setMinimumHeight(max(panel.layout().totalMinimumSize().height(), 320))
+        self.layout().insertWidget(self.layout().count() - 1, scroll)
         self.format.setCurrentIndex(max(0, self.format.findData(saved.get('format', 'fbx'))))
         self.profile.setCurrentIndex(max(0, self.profile.findData(saved.get('bvh_profile', 'generic'))))
         self.tpose.setChecked(saved.get('prepend_tpose', False))
@@ -72,6 +90,75 @@ class BatchExportDialog(SourceExportDialog):
         self.animate_camera.setChecked(saved.get('animate_camera', True))
         self.background_refine.setChecked(saved.get('background_refine', False))
         self.translation_scale.setValue(saved.get('camera_translation_scale', 1.))
+        # The base export dialog is a fixed 660x400; the batch panel needs more room.
+        self._grow_for_batch_panel()
+
+    def update_format(self):
+        super().update_format()
+        # The base note is word-wrapped too; keep its minimum honest after text swaps.
+        self.note.setMinimumHeight(_wrapped_height(self.note, 588))
+
+    def _grow_for_batch_panel(self):
+        self.layout().activate()
+        # Wrapped labels report optimistic minimums; the margin keeps the grid rows
+        # from being squeezed flat when the layout settles.
+        needed = self.layout().totalMinimumSize().height() + 48
+        screen = self.screen() or QApplication.primaryScreen()
+        cap = screen.availableGeometry().height() - 60 if screen is not None else needed
+        self.setFixedSize(660, max(400, min(needed, cap)))
+
+    def _build_parallel_group(self, saved, layout):
+        """One checkbox per physical GPU; hidden when nvidia-smi is unavailable."""
+        self.gpu_boxes = []
+        self.parallel_note = None
+        try:
+            from .batch_parallel import GpuQueryError, gpu_label, parent_scope, query_gpus
+            try:
+                gpus = query_gpus()
+                current = parent_scope(gpus) or []
+            except GpuQueryError:
+                gpus, current = [], []
+        except ImportError:
+            gpus, current = [], []
+        if len(gpus) < 2:
+            return
+        group = QGroupBox('Parallel GPUs')
+        column = QVBoxLayout(group)
+        saved_uuids = {entry.get('uuid') for entry in saved.get('parallel_gpus', [])
+                       if isinstance(entry, dict)}
+        for gpu in gpus:
+            box = QCheckBox(gpu_label(gpu, current=gpu in current))
+            box.setChecked(gpu['uuid'] in saved_uuids)
+            box.toggled.connect(self.sync_parallel)
+            # Two columns would exceed the dialog's fixed width; one label per
+            # row keeps the panel inside the scroll viewport without a horizontal
+            # scrollbar. The explicit minimum keeps wrapped labels elsewhere from
+            # squeezing the rows flat.
+            box.setMinimumHeight(box.sizeHint().height())
+            column.addWidget(box)
+            self.gpu_boxes.append((gpu, box))
+        note = QLabel()
+        note.setWordWrap(True)
+        column.addWidget(note)
+        self.parallel_note = note
+        layout.addWidget(group)
+        self.sync_parallel()
+
+    def sync_parallel(self):
+        count = sum(box.isChecked() for _, box in self.gpu_boxes)
+        parallel = count >= 2
+        if parallel:
+            self.preview.setChecked(False)
+        self.preview.setEnabled(not parallel)
+        self.preview.setToolTip('' if not parallel else tooltip_text(
+            'Preview export is unavailable in parallel mode; it needs the shown window.'))
+        if self.parallel_note is not None:
+            self.parallel_note.setText(
+                'Check two or more to process one video per GPU in parallel. '
+                'Parallel runs skip the preview video export.'
+                + (' Each parallel copy also loads its own GUI and workers; watch RAM headroom.'
+                   if count > 2 else ''))
+            self.parallel_note.setMinimumHeight(_wrapped_height(self.parallel_note, 568))
 
     def browse(self):
         folder = QFileDialog.getExistingDirectory(self, 'Batch Export Folder', self.folder.text())
@@ -86,14 +173,17 @@ class BatchExportDialog(SourceExportDialog):
         super().accept()
 
     def options(self):
+        gpus = [dict(index=gpu['index'], uuid=gpu['uuid'], name=gpu['name'])
+                for gpu, box in self.gpu_boxes if box.isChecked()]
         return dict(super().options(), folder=self.folder.text().strip(), preview=self.preview.isChecked(),
-                    auto_people=self.auto_people.isChecked(), people_limit=self.people_limit.value())
+                    auto_people=self.auto_people.isChecked(), people_limit=self.people_limit.value(),
+                    parallel_gpus=gpus)
 
 
 class BatchProgress(QDialog):
     cancel_requested = Signal()
 
-    def __init__(self, window, videos):
+    def __init__(self, window, videos, gpus=None):
         super().__init__(window)
         self.setWindowTitle('Batch Processing')
         self.setWindowModality(Qt.ApplicationModal)
@@ -105,8 +195,10 @@ class BatchProgress(QDialog):
         self.overall = QProgressBar()
         self.overall.setRange(0, len(videos))
         layout.addWidget(self.overall)
-        self.table = QTableWidget(len(videos), 2)
-        self.table.setHorizontalHeaderLabels(['Video', 'Status'])
+        # Parallel batches add the GPU column; the sequential table stays as it was.
+        headers = ['Video', 'GPU', 'Status'] if gpus else ['Video', 'Status']
+        self.table = QTableWidget(len(videos), len(headers))
+        self.table.setHorizontalHeaderLabels(headers)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setColumnWidth(0, 280)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -114,17 +206,50 @@ class BatchProgress(QDialog):
             item = QTableWidgetItem(path.name)
             item.setToolTip(str(path))
             self.table.setItem(i, 0, item)
-            self.table.setItem(i, 1, QTableWidgetItem('Pending'))
+            for column in range(1, len(headers)):
+                self.table.setItem(i, column, QTableWidgetItem(
+                    '' if gpus and column == 1 else 'Pending'))
         layout.addWidget(self.table)
+        if gpus:
+            # One status line and progress bar per GPU; children report
+            # independently and a single shared label would flicker between them.
+            self.gpu_rows = {}
+            rows_layout = QVBoxLayout()
+            rows_layout.setSpacing(2)
+            for gpu in gpus:
+                label = QLabel(f"GPU {gpu['index']} · idle")
+                label.setTextFormat(Qt.PlainText)
+                bar = QProgressBar()
+                bar.setRange(0, 0)
+                rows_layout.addWidget(label)
+                rows_layout.addWidget(bar)
+                self.gpu_rows[gpu['index']] = (label, bar)
+            layout.addLayout(rows_layout)
         self.label = QLabel('Starting...')
         self.label.setTextFormat(Qt.PlainText)
         self.label.setWordWrap(True)
+        if gpus:
+            self.label.hide()
         layout.addWidget(self.label)
         self.progress = QProgressBar()
+        if gpus:
+            self.progress.hide()
         layout.addWidget(self.progress)
         self.cancel_button = QPushButton('Cancel Batch')
         self.cancel_button.clicked.connect(self.request_close)
         layout.addWidget(self.cancel_button)
+
+    def set_gpu_status(self, index, text, value=None, maximum=None):
+        row = getattr(self, 'gpu_rows', {}).get(index)
+        if row is None:
+            return
+        label, bar = row
+        label.setText(text)
+        if maximum:
+            bar.setRange(0, maximum)
+            bar.setValue(value or 0)
+        else:
+            bar.setRange(0, 0)
 
     def request_close(self):
         if self.allow_close:
@@ -155,21 +280,39 @@ def trimmed_frames(info, trim):
 
 
 class VideoBatch(QObject):
-    def __init__(self, window, videos, options):
+    child_result = Signal(dict)
+    phase_changed = Signal(str)
+
+    def __init__(self, window, videos, options, headless=None):
         super().__init__(window)
         self.window = window
         self.videos = list(videos)
         self.options = deepcopy(options)
-        self.settings = deepcopy(window.workspace_settings())
-        self.background = window.camera_tools.background_options()
-        self.trim = None
-        if window.info:
-            first, end = window.processing_range()
-            if not (window.source_offset == 0 and window.slider.clip_in == 0
-                    and window.slider.clip_out == window.info['frames']):
-                self.trim = (first, end)
-        self.model = window.model_choice.currentData()
-        if options.get('auto_people') and self.model in PEOPLE_BATCH_MODELS:
+        # A parallel-batch child runs the same state machine without a dialog or
+        # batch folder; it restores the parent's captured state from the request.
+        self.headless = headless
+        if headless is not None:
+            self.settings = deepcopy(headless['settings'])
+            self.background = deepcopy(headless['background'])
+            self.trim = headless['trim']
+            self.model = headless['model']
+            self.options['preview'] = False  # preview capture needs the shown window
+            self.folder = None
+            self.output = Path(headless['output_dir'])
+        else:
+            self.settings = deepcopy(window.workspace_settings())
+            self.background = window.camera_tools.background_options()
+            self.trim = None
+            if window.info:
+                first, end = window.processing_range()
+                if not (window.source_offset == 0 and window.slider.clip_in == 0
+                        and window.slider.clip_out == window.info['frames']):
+                    self.trim = (first, end)
+            self.model = window.model_choice.currentData()
+            # Exclusive folders protect same-stem inputs and all previously saved output.
+            self.folder = Path(options['folder']) / ('Batch_' + datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
+            self.folder.mkdir()
+        if self.options.get('auto_people') and self.model in PEOPLE_BATCH_MODELS:
             from .models import missing
             unavailable = missing('people')
             if unavailable:
@@ -178,12 +321,12 @@ class VideoBatch(QObject):
         self.index = -1
         self.phase = 'starting'
         self.stopping = False
+        self._manual_restored = False
+        self._last_progress = 0.
         self.rows = [dict(video=str(p), status='pending', error='', exports=[]) for p in videos]
-        # Exclusive folders protect same-stem inputs and all previously saved output.
-        self.folder = Path(options['folder']) / ('Batch_' + datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
-        self.folder.mkdir()
-        self.dialog = BatchProgress(window, videos)
-        self.dialog.cancel_requested.connect(self.cancel)
+        self.dialog = None if headless is not None else BatchProgress(window, videos)
+        if self.dialog is not None:
+            self.dialog.cancel_requested.connect(self.cancel)
         self.timer = QTimer(self)
         self.timer.setInterval(100)
         self.timer.timeout.connect(self.tick)
@@ -197,11 +340,14 @@ class VideoBatch(QObject):
         for shortcut in w.shortcuts:
             shortcut.setEnabled(False)
         w.setAcceptDrops(False)
-        self.dialog.show()
+        if self.dialog is not None:
+            self.dialog.show()
         self.timer.start()
         self.advance()
 
     def save_report(self):
+        if self.headless is not None:
+            return  # the parallel parent writes the single merged report
         try:
             atomic_json(self.folder / 'batch-report.json', dict(version=1, model=self.model,
                 settings=self.settings, trim_seconds=self.trim, export=self.options,
@@ -213,12 +359,17 @@ class VideoBatch(QObject):
         self.phase = phase
         self.wait_started = time.monotonic()
         self.rows[self.index]['status'] = phase
-        self.dialog.table.item(self.index, 1).setText(phase.replace('_', ' ').title())
-        self.dialog.table.scrollToItem(self.dialog.table.item(self.index, 0))
-        self.dialog.progress.setRange(0, 0)
-        self.dialog.label.setText(phase.replace('_', ' ').title())
-        if not self.stopping:
-            self.dialog.cancel_button.setEnabled(True)
+        if self.dialog is not None:
+            self.dialog.table.item(self.index, 1).setText(phase.replace('_', ' ').title())
+            self.dialog.table.scrollToItem(self.dialog.table.item(self.index, 0))
+            self.dialog.progress.setRange(0, 0)
+            self.dialog.label.setText(phase.replace('_', ' ').title())
+            if not self.stopping:
+                self.dialog.cancel_button.setEnabled(True)
+        else:
+            from . import batch_protocol
+            batch_protocol.emit(dict(type='phase', phase=phase))
+            self.phase_changed.emit(phase)
         self.save_report()
 
     def advance(self):
@@ -237,11 +388,13 @@ class VideoBatch(QObject):
             self.finish()
             return
         w = self.window
-        self.dialog.summary.setText(f'Video {self.index + 1}/{len(self.videos)} · {self.videos[self.index].name}')
+        if self.dialog is not None:
+            self.dialog.summary.setText(f'Video {self.index + 1}/{len(self.videos)} · {self.videos[self.index].name}')
         self.set_phase('opening')
         try:
-            self.output = self.folder / f'{self.index + 1:04d}-{self.videos[self.index].stem}'
-            self.output.mkdir()
+            if self.headless is None:
+                self.output = self.folder / f'{self.index + 1:04d}-{self.videos[self.index].stem}'
+            self.output.mkdir(parents=True, exist_ok=True)
             self.keep_first = self.index == 0 and w.video_readable and Path(w.video_path).resolve() == self.videos[0]
             if not self.keep_first:
                 w.load_video(self.videos[self.index])
@@ -260,8 +413,13 @@ class VideoBatch(QObject):
             if self.phase == 'opening' and w.video_readable and w.info:
                 w.restore_workspace_settings(deepcopy(self.settings))
                 w.camera_tools.restore_background(self.background)
-                # Keep the first video's own person/take selection and source trim.
-                if not self.keep_first:
+                if self.headless is not None:
+                    # The child freshly loaded this video, so the shared trim also
+                    # applies to its first video; it carries the same source seconds.
+                    w.slider.set_clip(*trimmed_frames(w.info, self.trim))
+                    self._restore_manual_people()
+                elif not self.keep_first:
+                    # Keep the first video's own person/take selection and source trim.
                     w.slider.set_clip(*trimmed_frames(w.info, self.trim))
                 if self.needs_find_people():
                     self.set_phase('finding_people')
@@ -279,9 +437,15 @@ class VideoBatch(QObject):
             elif self.phase in ('opening', 'people_ready', 'waiting_preview') and time.monotonic() - self.wait_started > 60:
                 self.fail('Timed out waiting for video or motion preview.')
             if self.phase in ('finding_people', 'reconstructing', 'exporting'):
-                self.dialog.label.setText(w.status.text() + '\n' + w.task_info.text())
-                self.dialog.progress.setRange(w.progress.minimum(), w.progress.maximum())
-                self.dialog.progress.setValue(w.progress.value())
+                if self.dialog is not None:
+                    self.dialog.label.setText(w.status.text() + '\n' + w.task_info.text())
+                    self.dialog.progress.setRange(w.progress.minimum(), w.progress.maximum())
+                    self.dialog.progress.setValue(w.progress.value())
+                elif time.monotonic() - self._last_progress >= 0.5:
+                    self._last_progress = time.monotonic()
+                    from . import batch_protocol
+                    batch_protocol.emit(dict(type='progress', status=w.status.text(), task=w.task_info.text(),
+                                             value=w.progress.value(), maximum=w.progress.maximum()))
         except Exception as error:
             # A live worker must settle before advancing, even if a GUI refresh fails.
             if w.busy:
@@ -295,9 +459,35 @@ class VideoBatch(QObject):
         existing manual first-video People selection keep their own people."""
         if not self.options.get('auto_people') or self.model not in PEOPLE_BATCH_MODELS:
             return False
+        if self.index == 0 and self.headless is not None and self._manual_restored:
+            return False  # the parent's recorded first-video selection was restored
         if self.index == 0 and self.keep_first and self.window.people_state:
             if any(p.get('checked') for p in self.window.people_state.get('people', [])):
                 return False
+        return True
+
+    def _restore_manual_people(self):
+        """Re-apply the parent's first-video People selection inside a child.
+
+        The people root is content-hash keyed, so it exists on disk exactly as it
+        did in the parent. Any mismatch falls back to ordinary per-video discovery.
+        """
+        manual = self.headless.get('manual_people') if self.headless is not None else None
+        if not manual or self.index != 0:
+            return False
+        root = Path(manual['people_root'])
+        state = manual.get('state') or {}
+        people = state.get('people') or []
+        try:
+            if not (root / 'project.json').is_file() or not any(p.get('checked') for p in people):
+                raise ValueError('The recorded People selection is unusable.')
+        except (OSError, ValueError):
+            self.window.log.append('Batch child: the recorded People selection was not reusable; '
+                                   'running Find People instead.')
+            return False
+        self.window.people_root = root
+        self.window.people_state = dict(state)
+        self._manual_restored = True
         return True
 
     def start_find_people(self):
@@ -420,7 +610,8 @@ class VideoBatch(QObject):
 
     def complete_item(self):
         self.set_phase('done')
-        self.dialog.overall.setValue(self.index + 1)
+        if self.dialog is not None:
+            self.dialog.overall.setValue(self.index + 1)
         QTimer.singleShot(0, self.advance)
 
     def fail(self, message):
@@ -429,18 +620,20 @@ class VideoBatch(QObject):
         self.rows[self.index]['error'] = message
         self.window.log.append(f'Batch video {self.index + 1}: {self.videos[self.index]}\n{message}')
         self.set_phase('failed')
-        item = self.dialog.table.item(self.index, 1)
-        item.setText('Failed: ' + message)
-        item.setToolTip(message)
-        self.dialog.overall.setValue(self.index + 1)
+        if self.dialog is not None:
+            item = self.dialog.table.item(self.index, 1)
+            item.setText('Failed: ' + message)
+            item.setToolTip(message)
+            self.dialog.overall.setValue(self.index + 1)
         QTimer.singleShot(0, self.advance)
 
     def cancel(self):
         if self.stopping or self.phase == 'finished':
             return
         self.stopping = True
-        self.dialog.cancel_button.setEnabled(False)
-        self.dialog.label.setText('Stopping batch...')
+        if self.dialog is not None:
+            self.dialog.cancel_button.setEnabled(False)
+            self.dialog.label.setText('Stopping batch...')
         preview = getattr(self.window, '_preview_export', None)
         if preview is not None:
             preview.cancel()
@@ -455,8 +648,29 @@ class VideoBatch(QObject):
             for i, row in enumerate(self.rows):
                 if row['status'] not in ('done', 'failed'):
                     row['status'] = 'cancelled' if i == self.index else 'skipped'
-                    self.dialog.table.item(i, 1).setText(row['status'].title())
+                    if self.dialog is not None:
+                        self.dialog.table.item(i, 1).setText(row['status'].title())
         self.phase = 'finished'
+        if self.headless is not None:
+            # After the final advance() the index already points past the last row.
+            if 0 <= self.index < len(self.rows):
+                row = self.rows[self.index]
+            elif self.index >= len(self.rows) and self.rows:
+                row = self.rows[-1]
+            else:
+                row = dict(status='cancelled', error='', exports=[], project='')
+            self.child_result.emit(dict(ok=row['status'] == 'done', status=row['status'],
+                                        error=row.get('error', ''), exports=list(row.get('exports', [])),
+                                        project=str(row.get('project', ''))))
+            w = self.window
+            w._video_batch = None
+            w._source_export_options = self.previous_export_options
+            w.setAcceptDrops(self.saved_drops)
+            for shortcut, enabled in zip(w.shortcuts, self.saved_shortcuts):
+                shortcut.setEnabled(enabled)
+            w.update_readiness()
+            self.deleteLater()
+            return
         self.save_report()
         done = sum(r['status'] == 'done' for r in self.rows)
         failed = sum(r['status'] == 'failed' for r in self.rows)
@@ -529,7 +743,12 @@ class VideoBatchWorkspace:
         if not self._batch_export_options and not self.setup_batch_export():
             return
         try:
-            controller = VideoBatch(self, self._batch_videos, self._batch_export_options)
+            gpus = self._batch_export_options.get('parallel_gpus') or []
+            if len(gpus) >= 2 and len(self._batch_videos) >= 2:
+                from .batch_parallel import ParallelVideoBatch
+                controller = ParallelVideoBatch(self, self._batch_videos, self._batch_export_options, gpus)
+            else:
+                controller = VideoBatch(self, self._batch_videos, self._batch_export_options)
         except (OSError, ValueError) as error:
             self.status.setText('Cannot start batch: ' + str(error))
             return
