@@ -21,11 +21,19 @@ Character import, baking and portable scene export use a separate, unmodified Bl
 FBX sampler in `mocap/retarget/selective_fbx.py` retains Blender's GPL terms.
 The VRM add-on, mmd_tools and OpenCC retain their own notices under
 `third_party/character_import` (VRM_LICENSE.txt, VRM_MIT.txt, VRM_NOTICE.txt,
-MMD_LICENSE.txt, OPENCC_LICENSE.txt). Imported character files and textures remain the user's assets;
-they are not bundled with the application.
+MMD_LICENSE.txt, OPENCC_LICENSE.txt). User-imported character files and textures stay in the user's workspace.
+
+The UE5 Mannequin FBX profile includes Manny and Quinn mesh and reference rig
+data derived from Epic Games' installed Unreal Engine 5.7.4 Third Person
+template. The [Epic asset notice](third_party/ue5_mannequin/NOTICE.md) records
+their source, conversion and applicable Unreal Engine EULA. RGB MoCap uses
+Unreal® Engine template assets. Unreal® is a trademark or registered trademark
+of Epic Games, Inc. in the United States of America and elsewhere.
+Unreal® Engine, Copyright 1998 – 2026, Epic Games, Inc. All rights reserved.
 
 | Component | License / essential conditions |
 | --- | --- |
+| [MediaPipe](https://github.com/google-ai-edge/mediapipe) | Optional CPU face capture. The app downloads hash-pinned Python wheels, the [Face Landmarker model bundle](https://developers.google.com/edge/mediapipe/solutions/vision/face_landmarker) and canonical face geometry on first use. [MediaPipe license](https://github.com/google-ai-edge/mediapipe/blob/v0.10.32/LICENSE), [Face Blendshape model card](https://storage.googleapis.com/mediapipe-assets/Model%20Card%20Blendshape%20V2.pdf). |
 | [GVHMR](https://github.com/zju3dv/GVHMR) | Educational, research and nonprofit use only; derived changes must be open-source and noncommercial. [License](third_party/GVHMR/LICENSE). |
 | [ExMR](https://github.com/twehrbein/ExMR) / [FootMR](https://github.com/twehrbein/FootMR) | GVHMR-derived educational, research and nonprofit terms. [ExMR license](third_party/ExMR/LICENSE), [FootMR license](third_party/FootMR/LICENSE). |
 | [FlowHMR](https://github.com/flowhmr/flowhmr) | Apache-2.0 source. [License](third_party/FlowHMR/LICENSE). Supporting models have separate terms below. |
@@ -105,3 +113,15 @@ existing Flow runtime. VGGT retains its existing upstream/model terms; its weigh
 file is reused, not bundled again. GeoCalib's public checkpoint is obtained
 separately through Model Manager under CC BY 4.0; the upstream
 LICENSE-WEIGHTS is retained with support files. No TensorRT engine/runtime is distributed.
+
+
+## Optional Unreal Live Link sender
+
+RGB MoCap authors the optional provider/commandlet source in
+`developer-build/unreal-live-link`. Setup builds it locally against the user's
+separately installed Unreal Engine. The installation retains its Epic notices
+and terms; no Unreal Engine binaries or MetaHuman assets are bundled in this
+source checkout. The separately downloadable Unreal sample contains a generated
+MetaHuman assembly under its applicable Epic terms; its own asset notices
+distinguish that content from RGB MoCap-authored MIT material.
+The receiver uses Unreal's built-in Live Link Message Bus Source.

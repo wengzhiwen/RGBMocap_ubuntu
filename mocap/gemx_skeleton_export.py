@@ -14,7 +14,7 @@ from .motion_tools import selected_export
 from .source_bvh import continuous_angles, write_channels
 
 
-def write(path, row, source, destinations, fmt, progress):
+def write(path, row, source, destinations, fmt, progress, *, ue5_target=None, ue5_skin=None, emit=None):
     project = Path(row['project']).resolve()
     source = source.resolve()
     kind = row['kind']
@@ -65,7 +65,13 @@ def write(path, row, source, destinations, fmt, progress):
     if row.get('place_at_origin'):
         transform = centered_transform(transform, frames[0, 0, :3, 3], {}, project)
     prepend = row.get('prepend_tpose', False)
-    if fmt == 'fbx':
+    if ue5_target is not None:
+        from .ue5_fbx import export_retargeted
+        tip_local = np.einsum('nji,nj->ni', basis, rig['ends'])
+        export_retargeted(path, names, rest, basis, frames[:, :, :3, 3], rotations, FPS,
+                          ue5_target, in_place=row.get('ue5_in_place', False), emit=emit,
+                          source_tip_local=tip_local, skin=ue5_skin)
+    elif fmt == 'fbx':
         from .bone_overlay import reference_frame
         from .fbx_writer import write as write_fbx
 
@@ -85,7 +91,7 @@ def write(path, row, source, destinations, fmt, progress):
         tips = np.einsum('nji,nj->ni', display, directions)
         write_fbx(path, names, parents, rest, display, display, tips, frames, FPS,
                   transform=transform, progress=progress, rig_name=row.get('rig_name', 'SourceAnimation'),
-                  prepend_tpose=prepend, expected_bones=JOINT_COUNT)
+                  prepend_tpose=prepend, expected_bones=JOINT_COUNT, rest_pose=row.get('fbx_rest_pose'))
     else:
         parent = parents[1:]
         positions = frames[:, :, :3, 3]

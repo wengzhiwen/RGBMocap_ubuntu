@@ -77,6 +77,28 @@ Blender 打包需要 Blender 4.5，源动作 FBX / BVH 导出不需要 Blender�
 模板功能已通过 CPU 配置与路由测试，尚未单独完成真实视频 GPU 端到端验证。
 完整规则见[模板使用说明](docs/UBUNTU.md#reuse-a-projects-processing-settings)。
 
+
+## 上游同步新增（2026-11-20，自 1b03843a）
+
+- **UE5 Mannequin FBX 导出**：可将动作重定向到 UE5 Manny / Quinn 官方骨架并导出 FBX，
+  可选附带官方蒙皮网格；含绑定姿态与脚部间距保持（见[用户指南](docs/USER_GUIDE.md#ue5-mannequin-fbx)）。
+  代码为跨平台 Python，本分支 Linux 端尚未实测。
+- **Take 选择导出**：导出对话框可选择当前 take、全部 take 或单独 take，
+  并说明每个不可用 take 需要的操作；导出诊断同步改进。
+- **导出与预览增强**：源 FBX / BVH 导出新增 A / T 参考姿态；预览视频导出（Export Preview）
+  可包含源视频音频；Blender 串流端口可修改；Blender 打包合并导出。
+- **空脚部接触修复**：角色重定向在脚部接触数据为空时不再失败（含回归测试）。
+- **Track Face 人脸跟踪与导出**：MediaPipe CPU 人脸跟踪、表情 One Euro 平滑、
+  中性脸校准和 ARKit 系数 / Unreal Live Link Face CSV 导出。
+  上游运行时固定使用 `runtime_exmr/python.exe` 与 Windows x64 wheel 锁
+  （`installer/face-windows.lock`），Linux 端不可用，已在界面黑名单中隐藏。
+- **Unreal Live Link / MetaHuman 串流**：身体骨骼与表情经 Live Link 串流到 Unreal；
+  桥接模块仅在 Windows 上构建（`Setup_UnrealStream.cmd`，Win64 DLL 校验），
+  Linux 端不可用，串流目标下拉框已隐藏该选项；Blender 串流目标不受影响。
+- **SAM 3.1 CPU 卸载与 MAMMA 相机预览恢复**：沿用既有黑名单（SAM 3.1、MAMMA 在 Linux 隐藏），
+  代码随上游合并，Windows 行为不变。
+- 更多通用说明见[用户指南](docs/USER_GUIDE.md)与[Unreal 串流指南](docs/UNREAL_LIVE_LINK.md)（Windows）。
+
 ## 上游同步新增（2026-11-10，自 ef05127a）
 
 - **导出选项**：源动作 FBX / BVH 导出新增每人物原点放置与对称休息姿态选项，
@@ -99,8 +121,8 @@ Blender 打包需要 Blender 4.5，源动作 FBX / BVH 导出不需要 Blender�
 | ExMR、GVHMR 及相关附加模型 | 已接入独立环境，尚未完成 Linux 端到端验证 |
 | MAMMA、PromptHMR、PEAR 实时预览 | 当前不支持 Linux |
 | ARM64 Blender 打包与角色重定向 | 需要自行提供兼容的 Blender 4.5 |
-| Maya FBX、原点放置 / 对称休息姿态导出、Blender 骨骼串流 | 代码已随上游合入，尚未在 Linux 验证 |
-| GEM-X Native77、SAM 3.1 人物跟踪 | 上游仅支持 Windows，Linux 暂不可用 |
+| Maya FBX、原点放置 / 对称休息姿态导出、Blender 骨骼串流、UE5 Mannequin FBX、take 选择导出、A/T 参考姿态、预览音频 | 代码已随上游合入，尚未在 Linux 验证 |
+| GEM-X Native77、SAM 3.1 人物跟踪、Track Face 人脸跟踪、Unreal Live Link / MetaHuman 串流 | 上游仅支持 Windows，Linux 暂不可用（界面已隐藏） |
 
 验证结论仅对应记录中的硬件、输入与设置。详细结果见 [Ubuntu 验证](docs/UBUNTU_VALIDATION.md)、
 [Spark 验证](docs/SPARK_VALIDATION.md)和 [GB10 GUI 修复与播放验证](docs/validation/gb10-gui-crash-2026-11-07.md)。
