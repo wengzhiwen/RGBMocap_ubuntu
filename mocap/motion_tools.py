@@ -1,6 +1,6 @@
 """Available motion tools and their compatible optional processing stages."""
 from dataclasses import dataclass
-import json
+import json,sys
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,10 @@ MOTION_TOOLS = {"pear": MotionTool("pear", "PEAR · Live (Experimental)", (), li
                 "mamma": MotionTool("mamma", "MAMMA", ("mamma_prepare","mamma_masks","mamma_landmarks","mamma_camera","mamma_fit","mamma_publish")),
                 "prompthmr": MotionTool("prompthmr", "PromptHMR", ("prompthmr_prepare","prompthmr_track","prompthmr_pose","prompthmr_world","prompthmr_publish")),
                 "gemx": MotionTool("gemx", "GEM-X", ("gemx_reconstruct",))}
+
+# Optional Ubuntu-only estimator; its own private runtime and pinned weights.
+if sys.platform.startswith('linux'):
+    MOTION_TOOLS["fab"] = MotionTool("fab", "FAB", ("track", "fab_reconstruct"))
 
 
 class UnsupportedMotionTool(ValueError):
@@ -108,6 +112,14 @@ def result_is_current(project, kind, ignore_contacts=False):
         if kind == 'initial':return current(project)
         from .gemx_correct import KIND, selected
         return kind == KIND and selected(project, ignore_contacts=ignore_contacts, ignore_options=ignore_contacts) is not None
+    if tool.key == 'fab':
+        # One FAB capture keeps the canonical SMPL-X payload, so correction and
+        # export stay shared; only the FAB receipt guards its own source.
+        # Corrected results continue below and re-enter here for the base.
+        if kind == 'initial':
+            from .fab_pipeline import current
+            return current(project)
+        if kind != 'corrected_initial': return False
     if (project/'exmr_pending.json').exists():return False
     if (project/'exmr_receipt.json').exists():
         try:

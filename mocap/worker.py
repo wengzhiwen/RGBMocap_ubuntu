@@ -181,6 +181,11 @@ def main() -> int:
                 manifest['flow_options']={**manifest.get('flow_options',{}),'camera_interval':int(os.environ.get('RGB_MOCAP_FLOW_INTERVAL','0')),'fast_sam':os.environ.get('RGB_MOCAP_FLOW_FAST_SAM','1')=='1','sam_batch4':os.environ.get('RGB_MOCAP_FLOW_BATCH4','1')=='1','sam_gpu_crop':os.environ.get('RGB_MOCAP_FLOW_GPU_CROP','1')=='1','sam_hand_stride4':os.environ.get('RGB_MOCAP_FLOW_HAND_STRIDE4','1')=='1'}
                 manifest['flow_options']['hamer']=os.environ.get('RGB_MOCAP_FLOW_HAMER','0')=='1'
                 if manifest['flow_options']['hamer']:manifest['flow_options'].update(fast_sam=True,sam_hand_stride4=True)
+                # Optional FAH pass is mutually exclusive with HaMeR and saves the same SAM constraints.
+                manifest['flow_options']['fah']=os.environ.get('RGB_MOCAP_FAH','0')=='1'
+                if manifest['flow_options']['fah']:
+                    manifest['flow_options']['hamer']=False
+                    manifest['flow_options'].update(fast_sam=True,sam_hand_stride4=True)
             if args.motion_tool=='exmr':
                 from .exmr_options import options
                 manifest['exmr_options']=options(json.loads(os.environ.get('RGB_MOCAP_EXMR_OPTIONS','{}')))

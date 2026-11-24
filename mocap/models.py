@@ -256,6 +256,7 @@ STAGE_REQUIREMENTS = {
     'exmr_preprocess': ('exmr_sapiens',),
     'exmr_features': ('flow_sam','flow_sam_config','flow_mhr','hand_hamer','hand_mean','mano_right'),
     'exmr': ('exmr','exmr_config','smplx'),
+    'fab_reconstruct': ('smplx',),
     'mamma_assets': MAMMA_KEYS,
     **{stage:PHMR_KEYS for stage in ('prompthmr_assets','prompthmr_prepare','prompthmr_track','prompthmr_pose','prompthmr_world','prompthmr_publish')},
     'mamma_prepare': MAMMA_KEYS,

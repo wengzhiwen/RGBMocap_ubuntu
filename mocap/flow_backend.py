@@ -17,6 +17,11 @@ from .runtime_identity import variant_identity
 
 VERSION=1
 MAX_FRAMES=5000  # Pinned FlowHMR per-branch RoPE table; 30 fps.
+# Reviewed exact-digest pair: this SAM adapter revision adds only the optional
+# FAH hand-box publication. With FAH off the sampled math is unchanged, so the
+# previous identity stays valid for already-saved stages. A FAH run adds its own
+# source/asset keys, so it never reuses a non-FAH cache.
+ADAPTER_COMPAT={'flow_features':{'490bbac4fd60d715bf55e1cc536c90c3e1259bf5ae865230ebf22e7cc62a2232':'6d9081574acbb859153820cc8d5c57676d15c70261043d7b0035a395875e6ac2'}}
 ASSET_LINKS={
     'flowhmr':'checkpoints/flowhmr_latest/flowhmr_latest.ckpt',
     'flow_config':'checkpoints/flowhmr_latest/config.yml',
@@ -115,8 +120,10 @@ def identity(project,stage):
     selected=root_state.get('flow_options',{}).get('camera_interval',0)
     files={name:file_stat(project/name) for name in names if (project/name).exists()}
     from .flow_hamer import enabled as hamer_enabled,source_identity as hamer_identity
+    from .flow_fah import enabled as fah_enabled,source_identity as fah_identity
     hamer=hamer_enabled(project)
-    if stage=='flowhmr' and hamer:files['flow_hand_boxes.npy']=file_stat(project/'flow_hand_boxes.npy')
+    fah=fah_enabled(project)
+    if stage=='flowhmr' and (hamer or fah):files['flow_hand_boxes.npy']=file_stat(project/'flow_hand_boxes.npy')
     # Full-scene camera is shared even when each person has shorter visible takes.
     if stage=='flow_camera':
         files={'root_input':file_stat(root/'input.mp4')}
@@ -127,7 +134,9 @@ def identity(project,stage):
     if stage=='flow_export':
         code={name:sha256(ROOT/'mocap'/name) for name in ('flow_export.py','source_pose_fit.py','mixamo_rig.py','bvh_bind.py','mixamo_data.py')}
     else:
-        code={'adapter':hashlib.sha256(''.join(inspect.getsource(f) for f in (*functions[stage],activate,load_tensor,save_tensor)).encode()).hexdigest()}
+        adapter=hashlib.sha256(''.join(inspect.getsource(f) for f in (*functions[stage],activate,load_tensor,save_tensor)).encode()).hexdigest()
+        if not fah:adapter=ADAPTER_COMPAT.get(stage,{}).get(adapter,adapter)
+        code={'adapter':adapter}
     upstream={'flow_camera':'flowhmr/utils/runtime_vggt_camera.py','flow_features':'flowhmr/utils/runtime_sam_features.py','flowhmr':'flowhmr/pipeline/pipeline_v2m.py'}.get(stage)
     if upstream:code[upstream]=sha256(UPSTREAM/'FlowHMR'/upstream)
     if stage in ('flow_camera','flow_features'):
@@ -143,7 +152,9 @@ def identity(project,stage):
         code['sam_source']=source_identity(saved_fast_sam(project,state))
         code['sam_acceleration']=acceleration_options(project,state)
         code['hamer_boxes']=hamer
+        if fah:code['fah_boxes']=True
     if stage=='flowhmr' and hamer:code['hamer']=hamer_identity()
+    if stage=='flowhmr' and fah:code['fah']=fah_identity()
     import torch
     return dict(version=VERSION,stage=stage,inputs=files,camera_interval=selected if stage=='flow_camera' else None,
         models={key:file_stat(BY_KEY[key].path) for key in STAGE_REQUIREMENTS[stage] if not (stage=='flow_camera' and selected==-1)},
@@ -232,8 +243,8 @@ def _features(project,emit,low_memory):
     cap=cv2.VideoCapture(str(project/'input.mp4'));cap.set(cv2.CAP_PROP_N_THREADS,2) if hasattr(cv2,'CAP_PROP_N_THREADS') else None
     from .flow_sam import extract_tokens
     tokens=torch.empty((n,3072),dtype=torch.float32);anchors=[]
-    from .flow_hamer import enabled as hamer_enabled
-    hand_boxes=np.empty((n,2,4),np.float32) if hamer_enabled(project) else None
+    from .flow_hands import publish_hand_boxes
+    hand_boxes=np.empty((n,2,4),np.float32) if publish_hand_boxes(project) else None
     from .flow_hand_sampling import sample_indices,interpolate_hands
     hand_samples=sample_indices(n,options['sam_hand_stride4'])
     try:
@@ -376,6 +387,12 @@ def run_stage(project,stage,result,emit,force=False):
     if stage in ('flow_features','flowhmr') and hamer_enabled(project):
         from .models import BY_KEY,ready
         absent += [BY_KEY[k] for k in MODEL_KEYS if not ready(BY_KEY[k])]
+    from . import flow_fah as fah_pass
+    fah=stage in ('flow_features','flowhmr') and fah_pass.enabled(project)
+    if fah:
+        gaps=fah_pass.missing_names()
+        if gaps:raise ValueError('Prepare the optional FAH runtime and its own gated files first: '+', '.join(gaps)+
+                                ' ('+fah_pass.fah_runtime.VENV+', Model Manager > FlowHMR, docs/UBUNTU.md)')
     if absent:raise ValueError('Open FlowHMR Model Manager and prepare: '+', '.join(m.name for m in absent))
     state=json.loads((project/'project.json').read_text(encoding='utf-8'))
     signature=identity(project,stage)
@@ -412,6 +429,9 @@ def run_stage(project,stage,result,emit,force=False):
     elif stage=='flow_features':output=features(project,emit)
     elif stage=='flowhmr':
         output=infer(project,emit)
+        if fah:
+            # Publish the staged FAH prediction before placement selects a prediction.
+            fah_pass.refine(project,load_tensor(project/'flow_prediction.pt'),emit)
         from .flow_placement import ensure
         ensure(project,generated=True)
     else:
@@ -424,6 +444,9 @@ def run_stage(project,stage,result,emit,force=False):
     if hamer_enabled(project):
         if stage=='flow_features':outputs.append('flow_hand_boxes.npy')
         if stage=='flowhmr':outputs+=['flow_hamer_prediction.pt','flow_hamer_hands.npz','flow_hamer_receipt.json']
+    if fah:
+        if stage=='flow_features':outputs.append('flow_hand_boxes.npy')
+        if stage=='flowhmr':outputs+=[fah_pass.PREDICTION,fah_pass.HANDS,fah_pass.RECEIPT]
     committed_identity=identity(project,stage)
     if stage=='flow_features' and committed_identity!=signature:
         raise RuntimeError('SAM inputs or settings changed during extraction. Reconstruct 3D again; this extraction was not committed.')

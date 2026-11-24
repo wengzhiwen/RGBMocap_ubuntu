@@ -34,7 +34,17 @@ import ubuntu_cli  # noqa: E402
 BASE_SHA = '1b0384367fc6b63932c82f1c9c5cb4243a91de2e'
 PROFILES_DIGEST = '6a21b413b26dff5f6f7325c49f0c19047b1d77a705a93942c769197431c2f7c5'
 LOCK_GROUPS_DIGEST = 'ddb0fb566ce5476693eaacd5a686d61842d1a3ec203de88a6b2a1b915a549565'
-FLOW_ADAPTER_DIGEST = '391623dd5cc17739bae4c4f6cc1250c115b51ceb613b6f10cfccbf595d069557'
+FLOW_ADAPTER_DIGEST = '2427a194ebe474a66e1508cbb8b09292093a8f3fa2af48c5599184c265bd152f'
+# Per-stage adapter digests that FlowHMR receipts embed. The optional FAH pass adds
+# only SAM hand-box publication to `flow_features`; `flow_camera` and `flowhmr` stay
+# byte-identical, and the reviewed exact pair in mocap/flow_backend.py keeps saved
+# non-FAH feature stages valid.
+FLOW_ADAPTER_FUNCTIONS = {'flow_camera': ('camera', 'camera_interval'),
+                          'flow_features': ('features', '_features'),
+                          'flowhmr': ('infer', 'validate_motion')}
+FLOW_ADAPTER_BASELINE = {'flow_camera': 'e3d094bbc21a7af4aa64dc857f004d7d15fdf931e163ec137ce53393301181ba',
+                         'flow_features': '6d9081574acbb859153820cc8d5c57676d15c70261043d7b0035a395875e6ac2',
+                         'flowhmr': '11164f85046c4548f58bc74298b34e1f01b6b4b33309b314f4307d7a37b72a1b'}
 # Hashed into receipts with code_hash: Linux edits must still resolve to the baseline identity.
 ALIASED_IDENTITIES = {
     'mocap/worker.py': '883d9dde808c',
@@ -50,15 +60,32 @@ UNCHANGED_FILES = {
     'mocap/handflow_engine.py': '7d1061f7f56e6c47a7a9660979616fb751dd8da36f39f0f4ed72a3b81135e04d',
     'mocap/flow_hamer_entry.py': '587c42743b11046575ddf18209f481293bd4f4bad5c0197c5fa58faf0f774538',
     'mocap/compute_policy.py': '9c8ca149a0d93075353308e93208d8831476f94d9f089a5b0b2b57253b5f1c0c',
-    'mocap/flow_placement.py': '4d2df2dc65e8680fc4add9d750cdcabb1d7d09e9d87167cb340de5909777de23',
     'mocap/flow_sam.py': 'ac4bfaa4ce2ca1caed51e2a693a9c3c39f45dc07241ed9c0e2df7a127f52200f',
-    'worker_boot.py': 'db78b2b208bfb1920bdd2ff69ad929901ae3a114ed8cf5d5b2ae68e5b4690023',
     'launch_source.py': 'aeca1cbf79a3cf6c071bba5b2e74a611043d3e80aafcdb2db896ad9c779c3f05',
+}
+# Receipt-guarded files with one reviewed edit: old and new digests are both pinned so
+# a further unreviewed change still fails. flow_placement only gained the shared
+# committed-vs-draft prediction selector; HaMeR and plain FlowHMR read the same files.
+REVIEWED_EDITS = {
+    'worker_boot.py': ('db78b2b208bfb1920bdd2ff69ad929901ae3a114ed8cf5d5b2ae68e5b4690023',
+                       '14abd7728b3d6ac36571682cde39ee67daaf455b035ccf63531b72c758df8f6f'),
+    'mocap/flow_placement.py': ('4d2df2dc65e8680fc4add9d750cdcabb1d7d09e9d87167cb340de5909777de23',
+                                '1b8f0ab9ffd44c212760178436e000d9cbdbae92d0d0f64c859dcbd3de8ccb3b'),
 }
 
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def adapter_source(stage, names=None):
+    """FlowHMR adapter function sources, without importing NumPy or Torch."""
+    source = (ROOT / 'mocap/flow_backend.py').read_text(encoding='utf-8')
+    tree = ast.parse(source)
+    names = FLOW_ADAPTER_FUNCTIONS[stage] if names is None else names
+    return {name: ast.get_source_segment(source,
+            next(item for item in tree.body if isinstance(item, ast.FunctionDef) and item.name == name))
+            for name in names}
 
 
 def executable(path, text='#!/bin/sh\n'):
@@ -367,6 +394,23 @@ class CacheIdentity(unittest.TestCase):
     def test_plain_hashed_sources_are_byte_identical(self):
         for name, expected in UNCHANGED_FILES.items():
             self.assertEqual(digest((ROOT / name).read_bytes()), expected, name)
+
+    def test_reviewed_receipt_guard_edits(self):
+        for name, (before, after) in REVIEWED_EDITS.items():
+            actual = digest((ROOT / name).read_bytes())
+            self.assertEqual(actual, after, name)
+            self.assertNotEqual(actual, before, name)
+
+    def test_flow_stage_adapter_digests_keep_the_reviewed_pair(self):
+        for stage, names in FLOW_ADAPTER_FUNCTIONS.items():
+            needed = (*names, 'activate', 'load_tensor', 'save_tensor')
+            adapter_map = adapter_source(stage, needed)
+            parts = ''.join(adapter_map[n] + '\n' for n in needed)
+            current = digest(parts.encode())
+            if stage == 'flow_features':
+                self.assertNotEqual(current, FLOW_ADAPTER_BASELINE[stage], 'the FAH edit must be re-paired deliberately')
+            else:
+                self.assertEqual(current, FLOW_ADAPTER_BASELINE[stage], stage)
 
     def test_flow_adapter_source_identity_is_unchanged(self):
         source = (ROOT / 'mocap/flow_backend.py').read_text(encoding='utf-8')
