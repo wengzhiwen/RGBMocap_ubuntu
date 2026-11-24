@@ -369,6 +369,9 @@ def import_model_file(key: str, source: Path) -> Path:
     if key=='pear_geometry':
         from .pear_models import import_bundle
         return import_bundle(source)
+    if key == 'fah_mano_right':
+        from .fah_mano import import_fah_mano_right
+        return import_fah_mano_right(source)
     model=BY_KEY[key]; source=Path(source).resolve()
     if source.stat().st_size < model.minimum_bytes:
         raise ValueError('The file is too small for '+model.name)

@@ -54,6 +54,14 @@ revisions for this setup are
   Neutral and person detector in Model Manager.
   [FAB asset setup](https://github.com/noahcao/FAB/blob/ec65caf40632b4d36eb48f58ab45ea56d3cba21a/README.md#install)
 
+## Import the FAH hand model
+
+Select **FlowHMR**, enable **FAH Finger Refinement**, and open **Model Manager**.
+Click **Import FAH MANO…** and select the `MANO_RIGHT.pkl` produced by the
+upstream MANO converter. The import uses `MANO_DIR` when set. Otherwise it
+uses the `mano/` folder under `FAH_HOME`, which defaults to `~/.cache/fah`.
+The setup panel shows the path FAH is using.
+
 ## Run
 
 In the GUI, select **FlowHMR** and enable **FAH Finger Refinement**, or select

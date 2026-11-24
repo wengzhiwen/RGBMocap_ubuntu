@@ -1,11 +1,7 @@
-"""Model Manager status and setup guidance for the optional FAH runtime.
-
-Nothing here imports FAH or Torch, downloads anything, or writes a file. It shows
-the read-only readiness from `mocap/fah_runtime.py` and the steps the user runs
-themselves in a terminal.
-"""
+"""FAH readiness, setup guidance and MANO import in Model Manager."""
+from pathlib import Path
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QLabel, QPushButton, QTextBrowser, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QHBoxLayout, QLabel, QPushButton, QTextBrowser, QVBoxLayout, QWidget
 
 from . import fah_runtime
 
@@ -26,25 +22,56 @@ def status_line():
             '\n'.join(f"{row['name']}: {row['detail']}" for row in gaps))
 
 
+class _RuntimePanel(QWidget):
+    def __init__(self, parent):
+        super().__init__()
+        self._parent = parent
+        self.box = QHBoxLayout(self)
+        self.box.setContentsMargins(0, 0, 0, 0)
+        self.label = QLabel()
+        self.label.setWordWrap(True)
+        self.label.setTextFormat(Qt.PlainText)
+        self.import_button = QPushButton('Import FAH MANO...')
+        self.import_button.setToolTip('Import a trusted upstream-converted MANO_RIGHT.pkl for FAH only. '
+                                      'Raw Chumpy or official MANO pickles are rejected and existing files are not replaced.')
+        self.import_button.clicked.connect(self.import_mano)
+        self.setup_button = QPushButton('FAH Runtime Setup...')
+        self.setup_button.setToolTip('Show the separate pinned FAH environment and the gated files this option needs. '
+                                     'RGB MoCap never installs them for you.')
+        self.setup_button.clicked.connect(lambda: setup_instructions(self._parent))
+        self.box.addWidget(self.label, 1)
+        self.box.addWidget(self.import_button)
+        self.box.addWidget(self.setup_button)
+        self.refresh()
+
+    def refresh(self):
+        text, detail = status_line()
+        self.label.setText(text)
+        self.label.setToolTip(detail)
+        if text.endswith('Setup required') or text.endswith('not available here'):
+            self.label.setStyleSheet('color:#ffb45c')
+        else:
+            self.label.setStyleSheet('')
+        busy = bool(getattr(self._parent.window, 'busy', False))
+        self.import_button.setEnabled(fah_runtime.supported() and not busy)
+
+    def import_mano(self):
+        parent = self._parent
+        if not fah_runtime.supported() or bool(getattr(parent.window, 'busy', False)):
+            return
+        target = Path(fah_runtime.asset_roots()['mano']) / 'MANO_RIGHT.pkl'
+        start = str(target.parent) if target.parent.exists() else ''
+        selected, _ = QFileDialog.getOpenFileName(
+            parent,
+            'Import converted FAH MANO_RIGHT.pkl',
+            start,
+            'MANO pickles (*.pkl);;All files (*)')
+        if not selected:
+            return
+        parent.start_model_jobs([('import_model', ['--model', 'fah_mano_right', '--video', selected])])
+
 def runtime_panel(parent):
-    panel = QWidget()
-    box = QHBoxLayout(panel)
-    box.setContentsMargins(0, 0, 0, 0)
-    label = QLabel()
-    label.setWordWrap(True)
-    label.setTextFormat(Qt.PlainText)
-    text, detail = status_line()
-    label.setText(text)
-    label.setToolTip(detail)
-    if text.endswith('Setup required') or text.endswith('not available here'):
-        label.setStyleSheet('color:#ffb45c')
-    button = QPushButton('FAH Runtime Setup...')
-    button.setToolTip('Show the separate pinned FAH environment and the gated files this option needs. '
-                      'RGB MoCap never installs them for you.')
-    button.clicked.connect(lambda: setup_instructions(parent))
-    box.addWidget(label, 1)
-    box.addWidget(button)
-    return panel
+    return _RuntimePanel(parent)
 
 
 def setup_instructions(parent):
@@ -82,8 +109,7 @@ installer cannot record it, register the same commit deliberately in
 <ul>
 <li>FAH weights: <code>{paths['roots']['weights']}</code> (<code>FAH_WEIGHTS</code>, under <code>FAH_HOME</code>)</li>
 <li>SAM 3D Body configuration and MHR geometry: <code>{paths['roots']['sam3d']}</code> (<code>FAH_SAM3D</code>)</li>
-<li>MANO right hand: <code>{paths['roots']['mano']}</code> (<code>MANO_DIR</code>). When FAH has no MANO copy,
-this app reuses the MANO file you already imported in its Model Manager row.</li>
+<li>MANO right hand: <code>{paths['roots']['mano']}</code> (<code>MANO_DIR</code>). Use the converted version via <b>Import FAH MANO...</b>; current configured file: <code>{paths['roots']['mano'] / 'MANO_RIGHT.pkl'}</code>.</li>
 </ul>
 <p>Current readiness:</p><ul>{''.join(lines)}</ul>
 {'' if not gaps else '<p><b>Still needed:</b></p><ul>' + ''.join(gaps) + '</ul>'}
