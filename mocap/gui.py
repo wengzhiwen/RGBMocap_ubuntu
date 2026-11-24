@@ -205,9 +205,11 @@ class ModelsDialog(QDialog):
             from .pear_runtime import status
             note=QLabel(status()[1]+'\nPEAR support is included in install.cmd and update.cmd. Uses the existing shared runtime; Camera Align uses a small Flow-runtime support overlay. No CUDA compiler is needed. VGGT and GeoCalib are optional for multiple fixed views; model files are prepared separately below.')
             note.setWordWrap(True);layout.addWidget(note)
+        self.fah_panel = None
         if self.tool.key=='flowhmr' and window.flow_fah.isChecked():
             from .fah_manager import runtime_panel
-            layout.addWidget(runtime_panel(self))
+            self.fah_panel = runtime_panel(self)
+            layout.addWidget(self.fah_panel)
         self.table = QTableWidget(len(self.models), 3)
         self.table.setHorizontalHeaderLabels(["Model", "Status", "Action"])
         self.table.horizontalHeader().setStretchLastSection(True)
@@ -253,6 +255,8 @@ class ModelsDialog(QDialog):
         self.refresh()
 
     def refresh(self):
+        if getattr(self, 'fah_panel', None) is not None:
+            self.fah_panel.refresh()
         from .models import STAGE_REQUIREMENTS
         for i, model in enumerate(self.models):
             name = model.name + (" (Optional: HTD / 2D)" if self.tool.key == "gvhmr" and model.key == "pva" else "")
