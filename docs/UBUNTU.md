@@ -109,6 +109,9 @@ python3 tools/setup_ubuntu.py --profiles shared --build-correction   # native co
 
 Models are obtained separately, as on Windows: use **Model Manager**, or the `import_model` stage below. Do not copy runtime folders from a Windows install. Model receipts record file size and timestamp, so a copied file that shows as not ready should be imported again rather than having its receipt edited.
 
+See [FAH and FAB on Ubuntu](models/FAB_FAH.md) for the optional finger refiner
+and fixed-camera body model, including their separate environments and assets.
+
 ## Run the GUI
 
 ```bash

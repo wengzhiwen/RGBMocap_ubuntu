@@ -35,7 +35,7 @@ KNOWN_STAGES = ('diagnose', 'prepare', 'download', 'import_model', 'mesh', 'rig'
                 'gvhmr', 'refine', 'footmr', 'handflow', 'correct', 'export', 'people', 'person', 'flow_camera',
                 'flow_features', 'flowhmr', 'flow_export', 'exmr_preprocess', 'exmr_features', 'exmr', 'flow_batch',
                 'exmr_batch', 'gvhmr_batch', 'save_project', 'character', 'save_blend', 'save_blend_scene', 'copy_bvh',
-                'camera_background', 'camera_reference')
+                'camera_background', 'camera_reference', 'fab_reconstruct')
 RESULT_STAGES = {'export', 'flow_export', 'footmr', 'handflow', 'correct'}
 
 
@@ -56,7 +56,8 @@ def job_environment(args=None, base=None):
                RGB_MOCAP_FLOW_BATCH4='1' if getattr(args, 'sam_batch', True) else '0',
                RGB_MOCAP_FLOW_GPU_CROP='1' if getattr(args, 'gpu_crop', True) else '0',
                RGB_MOCAP_FLOW_HAND_STRIDE4='1' if getattr(args, 'hand_stride4', True) else '0',
-               RGB_MOCAP_FLOW_HAMER='1' if getattr(args, 'hamer', False) else '0')
+               RGB_MOCAP_FLOW_HAMER='1' if getattr(args, 'hamer', False) else '0',
+               RGB_MOCAP_FAH='1' if getattr(args, 'fah', False) else '0')
     return env
 
 
@@ -243,7 +244,7 @@ def flow_stage_names(args):
     return MOTION_TOOLS['flowhmr'].stages(correction=args.correct)
 
 
-def missing_models(stages, camera_interval=0, hamer=False):
+def missing_models(stages, camera_interval=0, hamer=False, fah=False):
     """The GUI's readiness rule. Workers still verify files before using them."""
     from mocap.flow_hamer import MODEL_KEYS
     from mocap.models import BY_KEY, missing, ready
@@ -254,14 +255,22 @@ def missing_models(stages, camera_interval=0, hamer=False):
         names += [model.name for model in missing('flow_export' if stage in ('correct', 'export') else stage)]
     if hamer:
         names += [BY_KEY[key].name for key in MODEL_KEYS if not ready(BY_KEY[key])]
+    if fah:
+        names += fah_gaps()
     return list(dict.fromkeys(names))
+
+
+def fah_gaps():
+    """Missing parts of the optional, separately provisioned FAH runtime."""
+    from mocap.fah_runtime import missing as fah_missing, supported
+    return list(fah_missing()) if supported() else []
 
 
 # Only these settings cross the template boundary; never copy project state or receipts.
 TEMPLATE_FLOW_FIELDS = {'camera_interval': 'camera_interval', 'fast_sam': 'fast_sam',
                         'sam_batch4': 'sam_batch', 'sam_gpu_crop': 'gpu_crop',
-                        'sam_hand_stride4': 'hand_stride4', 'hamer': 'hamer'}
-TEMPLATE_FLAGS = ('--hamer', '--no-hamer', '--fast-sam', '--no-fast-sam', '--sam-batch', '--no-sam-batch',
+                        'sam_hand_stride4': 'hand_stride4', 'hamer': 'hamer', 'fah': 'fah'}
+TEMPLATE_FLAGS = ('--hamer', '--no-hamer', '--fah', '--no-fah', '--fast-sam', '--no-fast-sam', '--sam-batch', '--no-sam-batch',
                   '--gpu-crop', '--no-gpu-crop', '--hand-stride4', '--no-hand-stride4', '--camera-interval',
                   '--correct', '--correction-preset', '--correction-mode', '--floor', '--foot-lock',
                   '--no-foot-lock', '--hand-lock', '--no-hand-lock', '--pelvis-offset')
@@ -305,7 +314,7 @@ def apply_flow_template(args):
         raise ValueError('The template has no saved FlowHMR settings.')
     flow = settings['flow_options']
     defaults = dict(camera_interval=0, fast_sam=True, sam_batch4=True, sam_gpu_crop=True,
-                    sam_hand_stride4=True, hamer=False)
+                    sam_hand_stride4=True, hamer=False, fah=False)
     for key, dest in TEMPLATE_FLOW_FIELDS.items():
         value = flow.get(key, defaults[key])
         if key == 'camera_interval':
@@ -314,6 +323,8 @@ def apply_flow_template(args):
         elif type(value) is not bool:
             raise ValueError('Template ' + key + ' must be a boolean.')
         setattr(args, dest, value)
+    if args.fah and args.hamer:
+        raise ValueError('A template selects either HaMeR or FAH fingers, not both.')
     result = settings.get('result', settings.get('pipeline', {}).get('result'))
     if result not in ('initial', 'corrected_initial'):
         raise ValueError('Template must select initial or corrected_initial for FlowHMR.')
@@ -353,13 +364,22 @@ def command_flow(args, runner=run_request_worker):
         print(f'Video not found: {video}', file=sys.stderr)
         return 2
     stages = flow_stage_names(args)
-    absent = missing_models(stages, args.camera_interval, args.hamer)
+    if getattr(args, 'fah', False) and getattr(args, 'hamer', False):
+        print('Choose either --hamer or --fah for finger refinement, not both.', file=sys.stderr)
+        return 2
+    absent = missing_models(stages, args.camera_interval, args.hamer, getattr(args, 'fah', False))
+    gaps = fah_gaps() if getattr(args, 'fah', False) else []
     if absent and not args.dry_run:
         print('Prepare these models first (GUI Model Manager, or the import_model stage):\n  ' + '\n  '.join(absent), file=sys.stderr)
+        if gaps:
+            print('FAH runtime items still needed (see Model Manager > FlowHMR, docs/UBUNTU.md):\n  ' + '\n  '.join(gaps), file=sys.stderr)
         return 2
     prepare = flow_prepare_arguments(args)
     if args.dry_run:
-        print(json.dumps(dict(stages=stages, prepare=prepare, flow_options=flow_option_summary(args), missing_models=absent), indent=2))
+        plan = dict(stages=stages, prepare=prepare, flow_options=flow_option_summary(args), missing_models=absent)
+        if getattr(args, 'fah', False):
+            plan['missing_fah'] = gaps
+        print(json.dumps(plan, indent=2))
         return 0
     env = job_environment(args)
     printer = EventPrinter(args.json)
@@ -379,14 +399,87 @@ def command_flow(args, runner=run_request_worker):
 
 
 def flow_option_summary(args):
-    return dict(camera_interval=args.camera_interval, fast_sam=args.fast_sam or args.hamer, sam_batch4=args.sam_batch,
-                sam_gpu_crop=args.gpu_crop, sam_hand_stride4=args.hand_stride4 or args.hamer, hamer=args.hamer)
+    fah = bool(getattr(args, 'fah', False))
+    forced = args.hamer or fah
+    options = dict(camera_interval=args.camera_interval, fast_sam=args.fast_sam or forced, sam_batch4=args.sam_batch,
+                   sam_gpu_crop=args.gpu_crop, sam_hand_stride4=args.hand_stride4 or forced, hamer=args.hamer)
+    if fah:
+        options['fah'] = True
+    return options
 
 
 def report_failure(stage, code, project=None):
     location = f' Completed stages are kept in {project}; rerun to reuse them.' if project else ''
     print(f'Stage {stage} failed with exit code {code}.{location}', file=sys.stderr)
     return code if isinstance(code, int) and 0 < code < 256 else 1
+
+
+def command_fab(args, runner=run_request_worker):
+    from mocap import fab_runtime, models
+    from mocap.motion_tools import MOTION_TOOLS, result_kind
+
+    if not fab_runtime.supported():
+        print('FAB is not supported on this system.', file=sys.stderr)
+        return 1
+
+    stages = list(MOTION_TOOLS['fab'].stages(correction=args.correct))
+
+    def fab_arguments(stage, project=None):
+        if stage == 'prepare':
+            values = ['--video', str(Path(args.video).resolve()), '--start', str(args.start),
+                      '--motion-tool', 'fab', '--result', result_kind(correction=args.correct)]
+            if args.end is not None:
+                values += ['--end', str(args.end)]
+            if args.project is not None:
+                values += ['--project', str(Path(args.project).resolve())]
+        elif stage in ('correct', 'export'):
+            values = ['--project', str(Path(project).resolve()), '--result', result_kind(correction=args.correct)]
+            if args.force and stage != 'track':
+                values += ['--force']
+        else:
+            values = ['--project', str(Path(project).resolve())]
+            if args.force and stage != 'track':
+                values += ['--force']
+        return values
+
+    missing_models = list(dict.fromkeys(
+        model.name for stage in stages for model in models.missing(stage)
+    ))
+    missing_fab = list(fab_runtime.missing())
+
+    if args.dry_run:
+        print(json.dumps({
+            'stages': stages,
+            'prepare_arguments': fab_arguments('prepare'),
+            'missing_models': missing_models,
+            'missing_fab': missing_fab,
+        }, indent=2))
+        return 0
+
+    if not Path(args.video).is_file():
+        print(f'FAB video file not found: {args.video}', file=sys.stderr)
+        return 1
+    if missing_models or missing_fab:
+        print(json.dumps({'missing_models': missing_models, 'missing_fab': missing_fab}, indent=2), file=sys.stderr)
+        return 1
+
+    env = job_environment(args)
+    printer = EventPrinter(args.json)
+    code, events = runner('prepare', fab_arguments('prepare'), env, printer)
+    if code:
+        return report_failure('prepare', code)
+    project = next((event['project'] for event in events if event.get('type') == 'prepared'), None)
+    if project is None:
+        print('The prepare stage did not report a project.', file=sys.stderr)
+        return 1
+    for stage in stages:
+        if stage == 'prepare':
+            continue
+        code, _ = runner(stage, fab_arguments(stage, project), env, printer)
+        if code:
+            return report_failure(stage, code, project)
+    print(f'Finished. Project: {project}')
+    return 0
 
 
 # Export and the escape hatch ----------------------------------------------------------
@@ -538,7 +631,10 @@ def command_stages(args):
     value = dict(machine=normalize_machine(), variant=(linux_variant() or {}).get('name'),
                  torch={key: effective_profile(key)['packages']['torch'] for key in PROFILES},
                  flowhmr_pipeline=MOTION_TOOLS['flowhmr'].stages(), flowhmr_corrected_pipeline=MOTION_TOOLS['flowhmr'].stages(correction=True),
-                 hamer=dict(runs_in='exmr', note='A child of flowhmr; enable it with flow --hamer.'), stages=routed,
+                 hamer=dict(runs_in='exmr', note='A child of flowhmr; enable it with flow --hamer.'),
+                 fah=dict(runs_in='fah', environment='.venv-fah', only='linux',
+                          note='An optional child of flowhmr; enable it with flow --fah. Mutually exclusive with --hamer.'),
+                 stages=routed,
                  note='rig/mesh/export/correct/character route by saved project model when --project is given.')
     if args.json:
         print(json.dumps(value, indent=2))
@@ -547,6 +643,7 @@ def command_stages(args):
     print('FlowHMR:          ' + ' -> '.join(value['flowhmr_pipeline']))
     print('With correction:  ' + ' -> '.join(value['flowhmr_corrected_pipeline']))
     print('HaMeR:            optional child of flowhmr, in .venv-exmr (flow --hamer)')
+    print('FAH:              optional child of flowhmr, in .venv-fah (flow --fah); not on Windows; exclusive with HaMeR')
     print(f"\n{'stage':<20}{'profile':<10}environment")
     for stage, row in routed.items():
         print(f"{stage:<20}{row['profile']:<10}{row['environment']}")
@@ -695,6 +792,32 @@ def check_models():
             check('HaMeR models', 'warn' if hamer else 'ok', ', '.join(hamer) or 'ready')]
 
 
+def check_fah(env, real=False):
+    """The optional FAH refinement runtime; never required by the default flow."""
+    from mocap.fah_runtime import VENV, HINT, interpreter, readiness, runtime_stamp, supported
+    if not supported():
+        return [check('FAH runtime', 'ok', 'not offered on this platform; the default flow is unchanged')]
+    rows = []
+    gaps = [row for row in readiness() if row['required'] and not row['ok']]
+    rows.append(check('FAH runtime', 'ok' if not gaps else 'warn',
+                      'optional FlowHMR finger refinement is ready (' + str(runtime_stamp().get('package')) + ')' if not gaps
+                      else 'Optional. Missing: ' + '; '.join(row['name'] + ' - ' + row['detail'] for row in gaps)))
+    python = interpreter(ROOT)
+    if not real or not python.is_file():
+        if real and not python.is_file():
+            rows.append(check('FAH runtime import', 'warn', f'{VENV} is missing. {HINT}'))
+        return rows
+    code, output = capture([python, '-I', '-X', 'utf8', ROOT / 'tools/check_fah_runtime.py'], env, 600)
+    line = next((text for text in output.splitlines() if text.startswith('@@FAH@@')), None)
+    value = json.loads(line[len('@@FAH@@'):]) if line else {}
+    ok = code == 0 and value.get('revision_ok') is True and value.get('cuda') is True
+    rows.append(check('FAH import and CUDA', 'ok' if ok else 'warn',
+                      f"FAH {value.get('package')} commit {str(value.get('commit'))[:12]} "
+                      f"torch {value.get('torch')} cuda={value.get('cuda')}"
+                      if value else last_line(output) or f'{VENV} probe failed'))
+    return rows
+
+
 def check_gpu(env, real=False):
     smi = shutil.which('nvidia-smi')
     if not smi:
@@ -741,6 +864,7 @@ def run_checks(env, gpu=False):
     rows += check_correction(env)
     rows += check_assets()
     rows += check_models()
+    rows += check_fah(env, gpu)
     rows += check_gpu(env, gpu)
     free = shutil.disk_usage(ROOT).free / 1024**3
     rows.append(check('free disk', 'ok' if free >= 20 else 'warn', f'{free:.1f} GiB'))
@@ -791,6 +915,8 @@ def parser():
     flow.add_argument('--camera-interval', type=int, choices=(-1, 0, 1, 2, 5, 10, 30), default=0,
                       help='0 Moving/Unknown Auto; -1 Static Camera; otherwise analyze every N frames.')
     flow.add_argument('--hamer', action=argparse.BooleanOptionalAction, help='Optional HaMeR finger refinement in the ExMR environment; forces Fast SAM and 4-frame hands.')
+    flow.add_argument('--fah', action=argparse.BooleanOptionalAction,
+                      help='Optional FAH finger refinement in the separate .venv-fah environment (Linux only); forces Fast SAM and 4-frame hands, and cannot be combined with --hamer.')
     for name, flag, label in (('fast_sam', 'fast-sam', 'Fast SAM'), ('sam_batch', 'sam-batch', 'adaptive Fast SAM batching'),
                               ('gpu_crop', 'gpu-crop', 'GPU hand crops'), ('hand_stride4', 'hand-stride4', '4-frame hand sampling')):
         flow.add_argument('--' + flag, dest=name, action=argparse.BooleanOptionalAction, default=True, help=f'{label} (default on).')
@@ -804,6 +930,16 @@ def parser():
     flow.add_argument('--force', action='store_true', help='Recompute completed stages instead of reusing them.')
     flow.add_argument('--dry-run', action='store_true', help='Print the planned stages and readiness; run nothing.')
     flow.set_defaults(handler=command_flow)
+    fab = commands.add_parser('fab', help='Run FAB on one video, for one person.')
+    add_common(fab)
+    fab.add_argument('--video', required=True, type=Path)
+    fab.add_argument('--project', type=Path, help='Project folder; default is under projects/.')
+    fab.add_argument('--start', type=float, default=0.0, help='Start of the processing range, in seconds.')
+    fab.add_argument('--end', type=float, help='End of the processing range, in seconds.')
+    fab.add_argument('--force', action='store_true', help='Rerun FAB stages even when their outputs already exist.')
+    fab.add_argument('--dry-run', action='store_true', help='Print planned stages and missing requirements without running workers.')
+    fab.add_argument('--correct', action='store_true', help='Run correction and export the corrected result.')
+    fab.set_defaults(handler=command_fab)
     export = commands.add_parser('export', help='Export a prepared result as FBX, BVH or a portable Blender bundle.')
     add_common(export)
     export.add_argument('--project', required=True, type=Path, help='The model project reported by the flow command.')

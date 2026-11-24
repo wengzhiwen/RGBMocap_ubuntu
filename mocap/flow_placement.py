@@ -54,7 +54,7 @@ def context(project,generated=False):
     project=Path(project);root=scene_root(project)
     state=json.loads((project/'project.json').read_text(encoding='utf-8'))
     inputs={name:file_stat(project/name) for name in ('flow_prediction.pt','flow_placement.json','flow_camera.npz','tracking.npz')}
-    from .flow_hamer import prediction_name
+    from .flow_hands import prediction_name
     selected=prediction_name(project,generated=generated)
     if selected!='flow_prediction.pt':inputs[selected]=file_stat(project/selected)
     inputs['scene_camera']=file_stat(root/'flow_camera.npz')
@@ -82,7 +82,7 @@ def prediction_current(project):
     project=Path(project)
     try:
         record=json.loads((project/'flowhmr_receipt.json').read_text(encoding='utf-8'))
-        from .flow_hamer import prediction_name
+        from .flow_hands import prediction_name
         selected=prediction_name(project)
         return (not (project/'flowhmr_pending.json').exists() and record['identity']==identity(project,'flowhmr')
                 and record['outputs']['flow_prediction.pt']==file_stat(project/'flow_prediction.pt')
@@ -109,7 +109,7 @@ def ensure(project,generated=False,body=None):
         with np.load(root/'flow_camera.npz',allow_pickle=False) as data:
             if end-begin!=n or not np.array_equal(cameras,data['camera_RT_yup'][begin:end]):
                 raise ValueError('Person take does not use the matching shared scene camera slice')
-    from .flow_hamer import prediction_name
+    from .flow_hands import prediction_name
     raw=load_tensor(project/prediction_name(project,generated=generated));validate_motion(raw,n)
     body=body if body is not None else SMPLSkeleton(model_path=str(BY_KEY['smplh'].path))
     with torch.inference_mode():rest=body.compute_j_shaped(raw['shapes'].reshape(1,16))[0,0].numpy()

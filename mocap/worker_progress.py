@@ -72,6 +72,13 @@ def main():
         configure_worker_cpu(stage)
         from .mamma_pipeline import main as mamma_main
         return mamma_main(sys.argv[1:])
+    if stage=='fab_reconstruct' and '--project' in sys.argv:
+        # The shared worker owns publication; FAB inference stays in its own
+        # child interpreter, so this stage never loads FAB here.
+        from .compute_policy import configure_worker_cpu
+        configure_worker_cpu(stage)
+        from .fab_pipeline import main as fab_main
+        return fab_main(sys.argv[1:])
     if stage == 'gemx_contact_solve':
         from .gemx_contact_solver import main as solve
         return solve(sys.argv[2:], emit)

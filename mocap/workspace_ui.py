@@ -403,6 +403,13 @@ def build_workspace(w):
     w.flow_hamer.setToolTip(tooltip_text('Use HaMeR for more accurate finger tracking with every-frame hand inference and ExMR crop/rotation smoothing. Accuracy varies; jitter can remain. Slower and uses additional VRAM. Keeps FlowHMR body, wrists and movement. Requires HaMeR and MANO files. Automatically enables Fast SAM and 4-Frame Hand Sampling. Applies on Reconstruct 3D.'))
     flow_camera.addWidget(w.flow_hamer)
     w.flow_hamer.toggled.connect(lambda _: w.update_readiness())
+    from .fah_runtime import supported as fah_supported
+    w.flow_fah=QCheckBox('FAH Finger Refinement')
+    w.flow_fah.setToolTip(tooltip_text('Optional research finger refinement by the pinned upstream FAH hand model, running only in its own separate .venv-fah environment (Linux route; not available on Windows). It refines fingers on every frame from this project\'s existing SAM left/right hand boxes and saved camera intrinsics; body, wrists, trajectory, shape and contacts are kept and unusable crops keep the FlowHMR fingers. Accuracy is not guaranteed. Slower and uses extra VRAM. It cannot be combined with HaMeR, and it enables Fast SAM and 4-Frame Hand Sampling. Requires the separate FAH runtime and its own gated files; see Model Manager. Applies on Reconstruct 3D.'))
+    w.flow_fah.setVisible(fah_supported())
+    flow_camera.addWidget(w.flow_fah)
+    w.flow_fah.toggled.connect(lambda on: w.flow_hamer.setChecked(False) if on and w.flow_hamer.isChecked() else None)
+    w.flow_fah.toggled.connect(lambda on: w.update_readiness())
     flow_camera.addWidget(QLabel('Camera / Sampling'))
     w.flow_sampling = QComboBox()
     for label, interval in [('Moving / Unknown - Auto', 0), ('Static Camera', -1), ('Every Frame', 1), ('Every 2 Frames', 2), ('Every 5 Frames', 5), ('Every 10 Frames', 10), ('Every 30 Frames', 30)]:

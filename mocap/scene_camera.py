@@ -39,6 +39,11 @@ def camera_sources(project):
         # Publishing its first preview must not change the shared-floor identity.
         names=('hmr4d_results.pt','tracking.npz','input.mp4','exmr_camera_sources.json')
         return {name:stamp(project/name) for name in names if (project/name).exists()}
+    if (project/'fab_result.json').exists():
+        # FAB reconstructs one fixed camera, recorded in its own capture receipt.
+        # Generic previews may be regenerated freely without changing it.
+        names=('hmr4d_results.pt','tracking.npz','input.mp4','fab_result.json')
+        return {name:stamp(project/name) for name in names if (project/name).exists()}
     names=('hmr4d_results.pt','tracking.npz','input.mp4','opt_results.pt','initial_joints.npz','initial_mesh.json')
     if (project/'flow_camera.npz').exists():names+=('flow_camera.npz',)
     if (project/'exmr_camera_sources.json').exists():names+=('exmr_camera_sources.json',)

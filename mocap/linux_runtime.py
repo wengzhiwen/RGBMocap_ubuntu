@@ -90,9 +90,20 @@ def interpreter(root, key):
     return venv_folder(root, key) / 'bin' / 'python'
 
 
+def profile_for(stage, args=()):
+    if sys.platform.startswith('linux') and stage in {'rig', 'mesh', 'export', 'correct', 'character'} and '--project' in args:
+        try:
+            project = Path(args[args.index('--project') + 1]) / 'project.json'
+            if (json.loads(project.read_text(encoding='utf-8')).get('pipeline') or {}).get('model') == 'fab':
+                return 'shared'
+        except (OSError, ValueError, IndexError, AttributeError):
+            pass
+    from .runtime_registry import profile_for as default_profile_for
+    return default_profile_for(stage, args)
+
+
 def command(root, stage, args=()):
     """Same isolated UTF-8 worker command as a managed install, in the profile's own venv."""
-    from .runtime_registry import profile_for
     root = Path(root)
     key = profile_for(stage, args)
     python = interpreter(root, key)
