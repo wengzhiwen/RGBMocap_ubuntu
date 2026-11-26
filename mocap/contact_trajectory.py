@@ -115,11 +115,19 @@ def smooth_auto_handoffs(anchors,probes,weights,segments,fps):
         mask=np.zeros(len(anchors),bool)
         active=np.zeros(len(anchors),bool)
         for stance in stances:active[stance['start']:stance['end']]=True
+        # A one/two frame gate dropout between stances is fit noise, not a lift.
+        # The anchors it separates carry real travel, so the pair needs the same
+        # continuous handoff as a direct drift split, or the correction
+        # teleports the planted foot across the gap.
+        bridged=active.copy()
+        for left,right in zip(stances,stances[1:]):
+            gap=right['start']-left['end']
+            if 0<gap<=2:bridged[left['end']:right['start']]=True
         reference=anchors[:,foot].copy()
-        for first,end in runs(active):
+        for first,end in runs(bridged):
             reference[first:end]=rolling_anchor(probes[first:end,2*foot:2*foot+2],weights[first:end,foot],anchors[first,foot,1])
         for left,right in zip(stances,stances[1:]):
-            if left['end']!=right['start']:continue
+            if not (left['end']==right['start'] or 0<right['start']-left['end']<=2):continue
             boundary=right['start']
             first=max(left['start'],boundary-radius);end=min(right['end'],boundary+radius)
             mask[first:end]=True;right['handoff']=[int(first),int(end)]

@@ -13,12 +13,12 @@ import os
 import shutil
 import numpy as np
 from scipy.spatial.transform import Rotation
-from scipy.ndimage import gaussian_filter1d, maximum_filter1d, minimum_filter1d
+from scipy.ndimage import gaussian_filter1d, maximum_filter1d, median_filter, minimum_filter1d
 from scipy.linalg import solve_banded
 from .correction_settings import PRESETS
 
 PARENTS = [-1,0,0,0,1,2,3,4,5,6,7,8,9,9,9,12,13,14,16,17,18,19]
-VERSION = 9
+VERSION = 10
 CORE = 1024
 HALO_SECONDS = 4.0
 
@@ -191,6 +191,16 @@ airborne intervals, and split anchors when the source intentionally travels.
         from .multilevel_contacts import prepare
         return prepare(probes,probabilities,fps,preset,contact_ranges)
     if mode!='flat':raise ValueError('Unknown correction mode: '+str(mode))
+    # Per-frame sole fits jitter far more than the body they describe: a
+    # standing foot can read metres per second for one frame, which shatters
+    # stances into one-frame fragments and turns every fragment boundary into
+    # an anchor transition. Median smoothing the timeline once keeps the
+    # contact gates, support samples and anchors on the same stable
+    # trajectory. The airborne guard below still reads the raw timeline so a
+    # real jump is never smoothed away.
+    raw=probes
+    window=5 if n>=5 else (3 if n>=3 else 1)
+    if window>1:probes=median_filter(probes,size=(window,1,1),mode='nearest')
     height=probes[...,1].reshape(n,2,2).min(2)
     points=probes.reshape(n,2,2,3).mean(2)
     speed=np.zeros((n,2));vertical=np.zeros((n,2))
@@ -224,7 +234,7 @@ airborne intervals, and split anchors when the source intentionally travels.
     for foot in range(2):
         for first,end in intervals(active[:,foot]):
             if end-first<minimum:active[first:end,foot]=False
-    active[airborne_excursions(probes,fps)]=False
+    active[airborne_excursions(raw,fps)]=False
     if contact_ranges is not None:
         from .foot_contacts import normalize_ranges
         contact_ranges=normalize_ranges(contact_ranges,n)
@@ -253,7 +263,12 @@ airborne intervals, and split anchors when the source intentionally travels.
             target=solve_banded((2,2),bands,weight*target,check_finite=False)
     from .contact_trajectory import support_weights,rolling_anchor
     weights=support_weights(probes,active,fps)
-    offsets=support_points(probes,probabilities,active,fps=fps);anchors=offsets.copy()
+    # The native solve retains each foot's source pose below the ankle, so the
+    # corrected sole lands at anchor + (raw sole - coupling sole). The coupling
+    # term must be measured on the same raw timeline the solve reads, or the
+    # median filter's residual is published as skating. The anchors themselves
+    # stay on the filtered trajectory.
+    offsets=support_points(raw,probabilities,active,fps=fps);anchors=offsets.copy()
     segments=[]
     for foot in range(2):
         # Heel/forefoot choice follows source roll. Both contacts use a central
