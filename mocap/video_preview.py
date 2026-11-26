@@ -7,6 +7,12 @@ import cv2
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QImage
 
+# How far a decoded image may trail the playhead and still be shown.  The GUI
+# thread shares the interpreter with this decoder, and on heavy sources that
+# can leave decoding slower than playback; presenting only the exact requested
+# frame then froze the picture until the user paused.
+PLAY_SLACK = 10
+
 
 class PreviewDecoder(QThread):
     available = Signal(int, int)
@@ -43,7 +49,7 @@ class PreviewDecoder(QThread):
                 self.target = min(self.target, self.length - 1)
             end = self.target + max(1, self.capacity - 5)
             for key in list(self.cache):
-                if key >= 3 and (key < self.target - 2 or key >= end):
+                if key >= 3 and (key < self.target - PLAY_SLACK or key >= end):
                     del self.cache[key]
             image = self.cache.get(self.target)
             self.condition.notify()
@@ -61,7 +67,7 @@ class PreviewDecoder(QThread):
     def _obsolete(self, generation, wanted=None):
         with self.condition:
             return self.stopping or generation != self.generation or (wanted is not None and not
-                (wanted < 3 or self.target - 2 <= wanted < self.target + max(1, self.capacity - 5)))
+                (wanted < 3 or self.target - PLAY_SLACK <= wanted < self.target + max(1, self.capacity - 5)))
 
     def run(self):
         capture = None
@@ -88,7 +94,7 @@ class PreviewDecoder(QThread):
                         if capture is not None:
                             capture.release()
                         capture = cv2.VideoCapture(path, cv2.CAP_FFMPEG,
-                            [cv2.CAP_PROP_N_THREADS, 2, cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 1500,
+                            [cv2.CAP_PROP_N_THREADS, 4, cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 1500,
                              cv2.CAP_PROP_READ_TIMEOUT_MSEC, 1500])
                         if not capture.isOpened():
                             raise ValueError("Cannot open the video.")
@@ -144,7 +150,7 @@ class PreviewDecoder(QThread):
                         while len(self.cache) > self.capacity:
                             removable = next(key for key in self.cache if key >= 3)
                             del self.cache[removable]
-                        notify = wanted == self.target
+                        notify = self.target - PLAY_SLACK <= wanted <= self.target
                     if notify:
                         self.available.emit(generation, wanted)
                 except Exception as error:

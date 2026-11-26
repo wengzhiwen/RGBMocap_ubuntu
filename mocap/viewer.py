@@ -8,7 +8,7 @@ import numpy as np
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QWidget
-from .video_preview import PreviewDecoder
+from .video_preview import PLAY_SLACK, PreviewDecoder
 from .viewport import MotionView
 
 COCO_BONES = [(5, 6), (5, 7), (7, 9), (6, 8), (8, 10), (5, 11), (6, 12), (11, 12), (11, 13), (13, 15), (12, 14), (14, 16), (0, 1), (0, 2), (1, 3), (2, 4)]
@@ -181,7 +181,11 @@ class VideoView(QWidget):
         super().closeEvent(event)
 
     def _available(self, generation, index):
-        if self.decoder is not None and self.sender() is self.decoder and generation == self.generation and index == self.requested_index:
+        # A frame that trails the playhead slightly still beats a frozen
+        # picture during playback; far-off frames from a scrub are rejected by
+        # the same bound, and the exact frame presents when decoding lands.
+        if self.decoder is not None and self.sender() is self.decoder and generation == self.generation \
+                and 0 <= self.requested_index - index <= PLAY_SLACK:
             image = self.decoder.image(index)
             if image is not None:
                 self._present(index, image)
