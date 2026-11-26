@@ -7,12 +7,13 @@ saved selection. Only implemented tools appear in the list.
 | Model | Input and body | Fingers | Detailed guide |
 | --- | --- | --- | --- |
 | ExMR | One video; SMPL-X | Included | [ExMR](EXMR.md) |
-| FlowHMR | One video; SMPL-H | Included | [FlowHMR](FLOWHMR.md) |
+| FlowHMR | One video; SMPL-H | Included; optional FAH on Ubuntu | [FlowHMR](FLOWHMR.md), [FAH](FAB_FAH.md) |
 | GVHMR | One video; SMPL-X | Optional HandFlow | [GVHMR](GVHMR.md) |
 | MAMMA | Two or more synchronized fixed-camera videos; SMPL-X | Included | [MAMMA](../MAMMA.md) |
 | PromptHMR | One video; fixed or optional moving camera; jointly reconstructed people; SMPL-X | Not generated | [PromptHMR](PROMPTHMR.md) |
 | GEM-X | One fixed-camera video; one primary person; SOMA Native77 | Included | [GEM-X](GEMX.md) |
 | PEAR | Experimental real-time tracking from webcam or video input; one person, one or multiple fixed views; may be unstable | Included | [PEAR](PEAR.md) |
+| FAB (Ubuntu) | One fixed-camera video; one primary person; SMPL-X fitted from SMPL | Relaxed pose; optional FAH | [FAH and FAB](FAB_FAH.md) |
 
 One-video input does not mean one-person output. ExMR, FlowHMR and GVHMR can
 process checked people independently after **Find person**. Without discovery,

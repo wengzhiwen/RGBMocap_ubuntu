@@ -26,7 +26,7 @@ class Blacklist(unittest.TestCase):
 
     def test_selectable_tools_hide_blacklist_on_posix(self):
         tools = selectable_tools('posix')
-        self.assertEqual(set(tools), {'gvhmr', 'flowhmr', 'exmr'})
+        self.assertEqual(set(tools), {'gvhmr', 'flowhmr', 'exmr', 'fab'})
         self.assertEqual(tools['flowhmr'], MOTION_TOOLS['flowhmr'])
 
     def test_selectable_tools_keep_everything_on_windows(self):
@@ -77,7 +77,7 @@ class RealSelector(unittest.TestCase):
     def test_selector_shows_only_linux_models(self):
         if os.name == 'nt':
             self.skipTest('Windows keeps every model entry')
-        self.assertEqual(self._keys(), {'gvhmr', 'flowhmr', 'exmr'})
+        self.assertEqual(self._keys(), {'gvhmr', 'flowhmr', 'exmr', 'fab'})
         self.assertEqual(self.w.model_choice.currentData(), 'exmr')
 
     def test_people_tracker_has_no_sam31_on_linux(self):

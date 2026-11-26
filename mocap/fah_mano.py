@@ -7,27 +7,44 @@ import uuid
 from pathlib import Path
 
 MAX_BYTES = 16 * 1024 * 1024 + 1
+# Upstream FAH builds a MANO layer for each hand (it fits the right-hand model
+# to a mirrored left crop, and its layers, fitter and Procrustes assert both
+# files exist), so the left hand is registered the same way as the right.
+HAND_FILES = {'right': 'MANO_RIGHT.pkl', 'left': 'MANO_LEFT.pkl'}
 REQUIRED_FIELDS = (
     'v_template', 'shapedirs', 'posedirs', 'weights', 'f',
     'kintree_table', 'J_regressor', 'hands_mean', 'hands_components',
 )
-_CHUMPY_MESSAGE = (
-    'MANO_RIGHT.pkl looks like a raw Chumpy or official MANO pickle. '
-    'Convert the official MANO file with the upstream MANO conversion script, '
-    'then import the plain NumPy MANO_RIGHT.pkl.'
-)
+
+def _chumpy_message(name):
+    return (
+        f'{name} looks like a raw Chumpy or official MANO pickle. '
+        'Convert the official MANO file with the upstream MANO conversion script, '
+        f'then import the plain NumPy {name}.'
+    )
 
 def import_fah_mano_right(source):
+    return import_fah_mano(source, 'right')
+
+def import_fah_mano_left(source):
+    return import_fah_mano(source, 'left')
+
+def import_fah_mano(source, side='right'):
+    """Register one converted MANO hand for FAH; an existing different file is never replaced."""
     from . import fah_runtime
+
+    if side not in HAND_FILES:
+        raise ValueError('Choose the MANO left or right hand.')
+    name = HAND_FILES[side]
 
     if not fah_runtime.supported():
         raise ValueError('FAH MANO import is available on Linux only.')
 
     source = Path(source).resolve()
-    if source.name != 'MANO_RIGHT.pkl':
-        raise ValueError('Select a MANO file named MANO_RIGHT.pkl.')
+    if source.name != name:
+        raise ValueError(f'Select a MANO file named {name}.')
 
-    target = Path(fah_runtime.asset_roots()['mano']) / 'MANO_RIGHT.pkl'
+    target = Path(fah_runtime.asset_roots()['mano']) / name
 
     try:
         with source.open('rb') as handle:
@@ -35,21 +52,21 @@ def import_fah_mano_right(source):
     except OSError as error:
         raise ValueError('Could not read the selected MANO file: ' + str(error)) from error
     if len(data) >= MAX_BYTES:
-        raise ValueError('MANO_RIGHT.pkl is larger than 16 MiB; select the converted file.')
+        raise ValueError(f'{name} is larger than 16 MiB; select the converted file.')
 
-    _validate_mano_pickle(data)
+    _validate_mano_pickle(data, name)
 
     if target.exists():
         try:
             if _same_bytes(target, data):
                 return target
-            raise ValueError('A different MANO_RIGHT.pkl is already configured; it was not replaced.')
+            raise ValueError(f'A different {name} is already configured; it was not replaced.')
         except OSError as error:
             raise ValueError('Could not compare the existing MANO file: ' + str(error)) from error
 
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        fd, temp_name = _private_temp_file(target.parent)
+        fd, temp_name = _private_temp_file(target.parent, side)
         try:
             with os.fdopen(fd, 'wb') as handle:
                 handle.write(data)
@@ -62,20 +79,20 @@ def import_fah_mano_right(source):
                     return target
             except OSError:
                 pass
-            raise ValueError('A different MANO_RIGHT.pkl appeared; it was not replaced.')
+            raise ValueError(f'A different {name} appeared; it was not replaced.')
         except OSError as error:
-            raise ValueError('Could not publish MANO_RIGHT.pkl: ' + str(error)) from error
+            raise ValueError(f'Could not publish {name}: ' + str(error)) from error
         finally:
             try:
                 os.unlink(temp_name)
             except OSError:
                 pass
     except OSError as error:
-        raise ValueError('Could not publish MANO_RIGHT.pkl: ' + str(error)) from error
+        raise ValueError(f'Could not publish {name}: ' + str(error)) from error
 
     return target
 
-def _validate_mano_pickle(data):
+def _validate_mano_pickle(data, file_name='MANO_RIGHT.pkl'):
     text_opcode_names = {
         "STRING",
         "UNICODE",
@@ -115,22 +132,22 @@ def _validate_mano_pickle(data):
                 break
     except Exception:
         if has_chumpy:
-            raise ValueError(_CHUMPY_MESSAGE)
+            raise ValueError(_chumpy_message(file_name))
         raise ValueError("Malformed pickle data.") from None
 
     if has_chumpy:
-        raise ValueError(_CHUMPY_MESSAGE)
+        raise ValueError(_chumpy_message(file_name))
 
     if not seen:
         raise ValueError("Empty pickle data.")
 
-    missing = [name for name in REQUIRED_FIELDS if name not in found]
+    missing = [field for field in REQUIRED_FIELDS if field not in found]
     if missing:
         raise ValueError("Missing required fields: " + ", ".join(missing))
 
 
-def _private_temp_file(directory):
-    temp = directory / ('.fah_mano_right.' + uuid.uuid4().hex + '.tmp')
+def _private_temp_file(directory, side='right'):
+    temp = directory / ('.fah_mano_' + side + '.' + uuid.uuid4().hex + '.tmp')
     fd = os.open(str(temp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     return fd, str(temp)
 

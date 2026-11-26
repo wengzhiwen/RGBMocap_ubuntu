@@ -112,11 +112,16 @@ def export_project(project: Path, result="auto"):
     if exmr:label='ExMR original'
     if mamma:label='MAMMA original'
     if state.get('pipeline',{}).get('model')=='prompthmr':label='PromptHMR original'
+    fab_fingers=False
+    if state.get('pipeline',{}).get('model')=='fab':
+        label='FAB original'
+        from .fab_pipeline import fah_fingers
+        fab_fingers=fah_fingers(project)
     from .motion_tools import has_handflow
     if has_handflow(result):label+=' + HandFlow'
     atomic_json(project / "export.json", {"format": "BVH", "frames": len(selected["body_pose"]), "fps": fps,
         "length_unit": "meter", "up_axis": "Y", "rotation_order": target_record.get("export_bind",{}).get("rotation_order_default","ZXY"), "joints": target_record['names'],
-        "skeleton":"Humanoid52", "finger_motion":"MAMMA fitted body and finger motion" if mamma else "ExMR native finger inference" if exmr else "HandFlow finger inference; body and wrists preserved" if has_handflow(result) else "Source relaxed pose animated relative to open bind; finger inference is not enabled",
+        "skeleton":"Humanoid52", "finger_motion":"MAMMA fitted body and finger motion" if mamma else "ExMR native finger inference" if exmr else "HandFlow finger inference; body and wrists preserved" if has_handflow(result) else "FAH finger inference on the FAB body; body and wrists preserved" if fab_fingers else "Source relaxed pose animated relative to open bind; finger inference is not enabled",
         "bind_pose":target_record.get('export_bind',{}),
         "result_kind": result, "source": label + (" + Motion Correction" if result.startswith('corrected_') else '') + " SMPL-X motion",
         "ground_truth_accuracy": None})

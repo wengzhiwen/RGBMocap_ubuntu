@@ -15,7 +15,9 @@ POLICY_ONLY = {
     "951f52af4e4820ab63cda224dbda7b6e3d464a3d893a81759d89b99226546e1e": "6c1de70d9628ae41528a4494de39034764e0b938982d61c7470e631a371f4435",
     "a2fb18686236d6852df13f03b95890860e961b63072d809eeaf5cd3331edd6bc": "3125b5a360d71c229a958a553548af0f03c82b58698f1b758a14f2048a2f7e92",
     "3d166c1b0807397328f82f973b7617118b3c35d6435f4f85036bd8be2925268a": "d0d32032fad3470cc4801134d4bf4fafdf8bfc5bc805228ece5cc8dabe4f370e",
-    "86e0f23ca7a6d06bf177436bf8d2a8462577a8f151d3bdc7380c63dcdef016a3": "8e5e7e5e2c6f677299d4a6081f20c5e7c2fb0fe17f18c0e0a4e5599bb01f8b1a"
+    "86e0f23ca7a6d06bf177436bf8d2a8462577a8f151d3bdc7380c63dcdef016a3": "8e5e7e5e2c6f677299d4a6081f20c5e7c2fb0fe17f18c0e0a4e5599bb01f8b1a",
+    # export.py: FAB source and finger text in export.json only.
+    "3de4fec20a52c66d0bbc028ccba26b8c16aae575564fc9a9b4c8832c69d1874f": "0b8580ce7bcc7a1217fbdffe3882c46ee9d32b02113a538d915d472e13a68195"
 }
 
 
@@ -33,13 +35,15 @@ LOGGING_ONLY = {
 # peak-memory reporting): identical numerical paths and Windows behavior. These keep
 # identities shared with baseline ef05127 so saved work stays valid on either system.
 # The worker.py row also covers the optional FAH saved-option block: it writes
-# one extra FlowHMR choice during prepare and changes no stage source, input or
-# equation used by ExMR, GVHMR or the shared correction/export fingerprints.
+# one extra FlowHMR choice and the FAB choice during prepare, plus the FAB finger
+# label of the bone-preview record, and changes no stage source, input or equation
+# used by ExMR, GVHMR or the shared correction/export fingerprints.
 PLATFORM_ONLY = {
     "f49bb0507881bd15f2ade38fa992fdcfe90b0e1bc3b6ee0f5a7ce9f7fd6bfb20": "883d9dde808cf27c86611cb85f0e28ffcb3541639d417d2f68c4c7e1b2d00855",
     "3dcbafa291041b312dc3a5ab2518da0b6004505308f77c53bf0a50f4432bb571": "883d9dde808cf27c86611cb85f0e28ffcb3541639d417d2f68c4c7e1b2d00855",
     "b10aa55584c681f6493477525a251320b38b1e90b90765f5a18a08aee4ea226b": "883d9dde808cf27c86611cb85f0e28ffcb3541639d417d2f68c4c7e1b2d00855",
     "4a8faa5209f31f6efee615cb53845918dcc0142035758a191df587d482e2172d": "883d9dde808cf27c86611cb85f0e28ffcb3541639d417d2f68c4c7e1b2d00855",
+    "3a7827213370e1e9f4b47a2f608606d179cb39bb22b3b1bd72e727804ce2fdcd": "883d9dde808cf27c86611cb85f0e28ffcb3541639d417d2f68c4c7e1b2d00855",
     "9fd216619f107e629ed72234b039ec86fe59308c994cc5628c6a9ae3e6a19758": "77c7162093f5bbf9b4dba46287f6542d5069cd3aef24444f531eac94335bd82f",
     "36960f608a6a498dfddf4628edc55cfa0b05fd23526f946777b3bed25dcc2b80": "b82861ea8496949c3b7d914a4b6eecf6400e61dcc008a188e2b7504c317a3012"
 }

@@ -446,6 +446,7 @@ def command_fab(args, runner=run_request_worker):
         model.name for stage in stages for model in models.missing(stage)
     ))
     missing_fab = list(fab_runtime.missing())
+    gaps = fah_gaps() if getattr(args, 'fah', False) else []
 
     if args.dry_run:
         print(json.dumps({
@@ -453,6 +454,7 @@ def command_fab(args, runner=run_request_worker):
             'prepare_arguments': fab_arguments('prepare'),
             'missing_models': missing_models,
             'missing_fab': missing_fab,
+            'missing_fah': gaps,
         }, indent=2))
         return 0
 
@@ -462,6 +464,10 @@ def command_fab(args, runner=run_request_worker):
     if missing_models or missing_fab:
         print(json.dumps({'missing_models': missing_models, 'missing_fab': missing_fab}, indent=2), file=sys.stderr)
         return 1
+    if gaps:
+        print('FAH runtime items still needed (see Model Manager > FlowHMR or FAB, docs/UBUNTU.md):\n  ' + '\n  '.join(gaps),
+              file=sys.stderr)
+        return 2
 
     env = job_environment(args)
     printer = EventPrinter(args.json)
@@ -632,8 +638,10 @@ def command_stages(args):
                  torch={key: effective_profile(key)['packages']['torch'] for key in PROFILES},
                  flowhmr_pipeline=MOTION_TOOLS['flowhmr'].stages(), flowhmr_corrected_pipeline=MOTION_TOOLS['flowhmr'].stages(correction=True),
                  hamer=dict(runs_in='exmr', note='A child of flowhmr; enable it with flow --hamer.'),
+                 fab_pipeline=MOTION_TOOLS['fab'].stages(),
                  fah=dict(runs_in='fah', environment='.venv-fah', only='linux',
-                          note='An optional child of flowhmr; enable it with flow --fah. Mutually exclusive with --hamer.'),
+                          note='An optional finger pass: a child of flowhmr (flow --fah) or of fab_reconstruct (fab --fah). '
+                               'With flowhmr it is mutually exclusive with --hamer.'),
                  stages=routed,
                  note='rig/mesh/export/correct/character route by saved project model when --project is given.')
     if args.json:
@@ -643,7 +651,9 @@ def command_stages(args):
     print('FlowHMR:          ' + ' -> '.join(value['flowhmr_pipeline']))
     print('With correction:  ' + ' -> '.join(value['flowhmr_corrected_pipeline']))
     print('HaMeR:            optional child of flowhmr, in .venv-exmr (flow --hamer)')
-    print('FAH:              optional child of flowhmr, in .venv-fah (flow --fah); not on Windows; exclusive with HaMeR')
+    print('FAB:              ' + ' -> '.join(value['fab_pipeline']))
+    print('FAH:              optional finger pass in .venv-fah, a child of flowhmr (flow --fah) or fab_reconstruct (fab --fah);')
+    print('                  not on Windows; exclusive with HaMeR')
     print(f"\n{'stage':<20}{'profile':<10}environment")
     for stage, row in routed.items():
         print(f"{stage:<20}{row['profile']:<10}{row['environment']}")
@@ -939,6 +949,9 @@ def parser():
     fab.add_argument('--force', action='store_true', help='Rerun FAB stages even when their outputs already exist.')
     fab.add_argument('--dry-run', action='store_true', help='Print planned stages and missing requirements without running workers.')
     fab.add_argument('--correct', action='store_true', help='Run correction and export the corrected result.')
+    fab.add_argument('--fah', action=argparse.BooleanOptionalAction,
+                     help='Optional FAH finger refinement in the separate .venv-fah environment (Linux only) inside the FAB stage, '
+                          'using hand crops from FAB\'s own predicted hand points.')
     fab.set_defaults(handler=command_fab)
     export = commands.add_parser('export', help='Export a prepared result as FBX, BVH or a portable Blender bundle.')
     add_common(export)

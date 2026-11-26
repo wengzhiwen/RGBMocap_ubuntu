@@ -186,6 +186,9 @@ def main() -> int:
                 if manifest['flow_options']['fah']:
                     manifest['flow_options']['hamer']=False
                     manifest['flow_options'].update(fast_sam=True,sam_hand_stride4=True)
+            if args.motion_tool=='fab':
+                # Optional FAH finger pass, a child of the FAB stage; the receipt records what a result used.
+                manifest['fab_options']={**manifest.get('fab_options',{}),'fah':os.environ.get('RGB_MOCAP_FAH','0')=='1'}
             if args.motion_tool=='exmr':
                 from .exmr_options import options
                 manifest['exmr_options']=options(json.loads(os.environ.get('RGB_MOCAP_EXMR_OPTIONS','{}')))
@@ -256,9 +259,15 @@ def main() -> int:
             shutil.copy2(project/target['bvh_file'],project/'motion.bvh')
             export_path=project/'export.json'
             metadata=json.loads(export_path.read_text(encoding='utf-8')) if export_path.exists() else {}
+            tool=require_supported_project(project).key
+            # A FAB result's fingers come from its receipt: FAH when that pass ran, else the relaxed pose.
+            fab_fingers=False
+            if tool=='fab':
+                from .fab_pipeline import fah_fingers
+                fab_fingers=fah_fingers(project)
             metadata.update(format='BVH',skeleton='Humanoid52',joints=target['names'],result_kind=kind,frames=target['frames'],fps=target['fps'],
                 length_unit='meter',up_axis='Y',rotation_order=target.get('export_bind',{}).get('rotation_order_default','ZXY'),
-                finger_motion='ExMR native finger inference' if require_supported_project(project).key=='exmr' else 'HandFlow finger inference; body and wrists preserved' if has_handflow(kind) else 'Source relaxed pose animated relative to open bind; finger inference is not enabled',bind_pose=target.get('export_bind',{}))
+                finger_motion='ExMR native finger inference' if tool=='exmr' else 'HandFlow finger inference; body and wrists preserved' if has_handflow(kind) else 'FAH finger inference on the FAB body; body and wrists preserved' if fab_fingers else 'Source relaxed pose animated relative to open bind; finger inference is not enabled',bind_pose=target.get('export_bind',{}))
             atomic_json(export_path,metadata)
             import psutil
             emit('complete',stage='rig',output=str(result),cached=False,elapsed=time.monotonic()-started,

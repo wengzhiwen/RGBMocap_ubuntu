@@ -206,7 +206,7 @@ class ModelsDialog(QDialog):
             note=QLabel(status()[1]+'\nPEAR support is included in install.cmd and update.cmd. Uses the existing shared runtime; Camera Align uses a small Flow-runtime support overlay. No CUDA compiler is needed. VGGT and GeoCalib are optional for multiple fixed views; model files are prepared separately below.')
             note.setWordWrap(True);layout.addWidget(note)
         self.fah_panel = None
-        if self.tool.key=='flowhmr' and window.flow_fah.isChecked():
+        if window.fah_selected(self.tool.key):
             from .fah_manager import runtime_panel
             self.fah_panel = runtime_panel(self)
             layout.addWidget(self.fah_panel)
@@ -501,6 +501,15 @@ class MainWindow(VideoBatchWorkspace,PreviewExportWorkspace,PearWorkspace,GemXWo
         from .fah_runtime import readiness
         return [row for row in readiness() if row['required'] and not row['ok']]
 
+    def fah_selected(self, tool=None):
+        """Whether the optional FAH finger pass is chosen for a motion model (default: the selected one).
+
+        FlowHMR and FAB each keep their own choice, so one model's checkbox never reaches the other's jobs.
+        """
+        key=self.model_choice.currentData() if tool is None else tool
+        if key=='flowhmr':return self.flow_fah.isChecked()
+        return self.fab_fah.isChecked() if key=='fab' else False
+
     @read_only_checks
     def update_readiness(self):
         self.sync_video_batch()
@@ -535,7 +544,7 @@ class MainWindow(VideoBatchWorkspace,PreviewExportWorkspace,PearWorkspace,GemXWo
             if self.flow_hamer.isChecked():
                 from .flow_hamer import MODEL_KEYS
                 required.update(MODEL_KEYS)
-        fah_gaps=[row['name'] for row in self.fah_gaps()] if tool.key=='flowhmr' and self.flow_fah.isChecked() else []
+        fah_gaps=[row['name'] for row in self.fah_gaps()] if self.fah_selected(tool.key) else []
         if tool.key=='flowhmr' and self.flow_sampling.currentData()==-1:required.discard('flow_vggt')
         if tool.key=='mamma' and self.mamma_camera_mode.currentData()=='manual':required.difference_update(('flow_vggt','pear_geocalib'))
         if tool.key=='prompthmr' and self.prompthmr_camera.currentData()=='moving':required.update(STAGE_REQUIREMENTS['prompthmr_camera_assets'])
@@ -597,6 +606,7 @@ class MainWindow(VideoBatchWorkspace,PreviewExportWorkspace,PearWorkspace,GemXWo
         self.flow_hand_stride4.setEnabled(not self.busy and not forced_hand_pass)
         self.flow_hamer.setEnabled(not self.busy and not self.flow_fah.isChecked())
         self.flow_fah.setEnabled(not self.busy and not self.flow_hamer.isChecked())
+        self.fab_fah.setEnabled(not self.busy)
         self.flow_acceleration.setVisible(self.fast_sam.isChecked())
         self.flow_acceleration.setEnabled(not self.busy)
         self.exmr_camera.setEnabled(not self.busy)
@@ -805,6 +815,7 @@ class MainWindow(VideoBatchWorkspace,PreviewExportWorkspace,PearWorkspace,GemXWo
             self.flow_hand_stride4.setChecked(True)
             self.flow_hamer.setChecked(False)
             self.flow_fah.setChecked(False)
+            self.fab_fah.setChecked(False)
             self.exmr_camera.setCurrentIndex(0)
             self.exmr_smoothing.setChecked(True)
             self.camera_tools.restore_background({})
@@ -923,6 +934,10 @@ class MainWindow(VideoBatchWorkspace,PreviewExportWorkspace,PearWorkspace,GemXWo
         from .flow_fah import saved_flow_options
         from .fah_runtime import supported as fah_supported
         self.flow_fah.setChecked(fah_supported() and saved_flow_options(project,manifest).get('fah',False) is True)
+        from .fab_pipeline import fah_enabled as fab_fah_enabled
+        try:saved_fab_fah=fab_fah_enabled(manifest)
+        except ValueError:saved_fab_fah=False
+        self.fab_fah.setChecked(fah_supported() and saved_fab_fah)
         from .exmr_options import saved as saved_exmr
         exmr=saved_exmr(project,manifest)
         self.exmr_camera.setCurrentIndex(self.exmr_camera.findData(exmr['static_camera']))
@@ -1050,12 +1065,18 @@ class MainWindow(VideoBatchWorkspace,PreviewExportWorkspace,PearWorkspace,GemXWo
                 self.preview_audio.reanchor((first + local_frame) / fps, speed)
 
     def stop_playback(self):
+        was_active = self.timer.isActive()
         self.timer.stop()
         if self.preview_audio is not None:
             self.preview_audio.pause()
         self.timer_resolution.release()
         self.set_playback_indicator(False)
         self.pear_playback_stopped()
+        if was_active:
+            # The decoder can sit a few frames past the paused playhead with
+            # nothing left to decode; re-request the frame so the picture
+            # lands exactly on it.
+            self.seek(self.slider.value())
 
     def set_playback_indicator(self, playing):
         label = "Pause" if playing else "Play"
@@ -1179,7 +1200,8 @@ class MainWindow(VideoBatchWorkspace,PreviewExportWorkspace,PearWorkspace,GemXWo
             from .flow_hamer import MODEL_KEYS
             from .models import BY_KEY
             unavailable += [BY_KEY[k] for k in MODEL_KEYS if not ready(BY_KEY[k])]
-        if 'sam31_people' not in stages and self.model_choice.currentData()=='flowhmr' and self.flow_fah.isChecked():
+        # With FAB the FAH pass is a child of the reconstruct stage alone, so its other jobs do not need it ready.
+        if 'sam31_people' not in stages and self.fah_selected() and (self.model_choice.currentData()!='fab' or 'fab_reconstruct' in stages):
             gaps=[row['name'] for row in self.fah_gaps()]
             if gaps:
                 self.status.setText('FAH is not ready: '+', '.join(gaps)+'. Open Model Manager for the separate FAH runtime and file steps.')
@@ -1439,7 +1461,7 @@ class MainWindow(VideoBatchWorkspace,PreviewExportWorkspace,PearWorkspace,GemXWo
             frames=int(arguments[arguments.index('--end-frame')+1])-int(arguments[arguments.index('--first-frame')+1])
         model=arguments[arguments.index('--model')+1] if '--model' in arguments else ''
         result=arguments[arguments.index('--result')+1] if '--result' in arguments else self.active_result
-        key=(stage,tool,frames,model,result,self.compute_mode.currentData(),self.fast_sam.isChecked(),self.flow_batch4.isChecked(),self.flow_gpu_crop.isChecked(),self.flow_hand_stride4.isChecked(),self.flow_hamer.isChecked(),self.flow_fah.isChecked(),self.flow_sampling.currentData(),self.exmr_camera.currentData())
+        key=(stage,tool,frames,model,result,self.compute_mode.currentData(),self.fast_sam.isChecked(),self.flow_batch4.isChecked(),self.flow_gpu_crop.isChecked(),self.flow_hand_stride4.isChecked(),self.flow_hamer.isChecked(),self.flow_fah.isChecked(),self.fab_fah.isChecked(),self.flow_sampling.currentData(),self.exmr_camera.currentData())
         if not isinstance(estimate,(int,float)) or not math.isfinite(estimate) or not 1<=estimate<=7*86400:estimate=None
         if stage in ('flow_batch','exmr_batch','gvhmr_batch'):
             from .queue_groups import argument
@@ -1602,7 +1624,7 @@ class MainWindow(VideoBatchWorkspace,PreviewExportWorkspace,PearWorkspace,GemXWo
         environment.insert('RGB_MOCAP_FLOW_GPU_CROP','1' if self.flow_gpu_crop.isChecked() else '0')
         environment.insert('RGB_MOCAP_FLOW_HAND_STRIDE4','1' if self.flow_hand_stride4.isChecked() else '0')
         environment.insert('RGB_MOCAP_FLOW_HAMER','1' if self.flow_hamer.isChecked() else '0')
-        environment.insert('RGB_MOCAP_FAH','1' if self.flow_fah.isChecked() else '0')
+        environment.insert('RGB_MOCAP_FAH','1' if self.fah_selected() else '0')
         environment.insert('RGB_MOCAP_EXMR_OPTIONS',json.dumps({'static_camera':self.exmr_camera.currentData(),'smoothing':'global' if self.exmr_smoothing.isChecked() else 'none'}))
         self.process.setProcessEnvironment(environment)
         self.process.readyReadStandardOutput.connect(self.read_stdout)

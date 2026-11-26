@@ -15,9 +15,11 @@ upstream release expects them:
       weights/shared/detector.pt      (the learned mesh fitter is not used by this adapter)
       sam-3d-body-dinov3/{model_config.yaml,assets/mhr_model.pt}
       mano/MANO_RIGHT.pkl                 (or $MANO_DIR)
+      mano/MANO_LEFT.pkl                   (same folder; upstream loads both hands)
 
 Only `activate()` runs inside the FAH environment itself; it validates the
-interpreter and the pinned package revision before any model loads.
+interpreter and the pinned package revision before any model loads. The same
+pass serves FlowHMR (`flow --fah`) and FAB (`fab --fah`); see mocap/flow_fah.py.
 """
 from __future__ import annotations
 
@@ -134,7 +136,10 @@ def asset_paths(root=None, env=None) -> dict:
                 'detector': here('detector'),
                 'sam_config': paths['sam3d'] / 'model_config.yaml',
                 'sam_mhr': paths['sam3d'] / 'assets' / 'mhr_model.pt',
-                'mano': paths['mano'] / 'MANO_RIGHT.pkl'}
+                'mano': paths['mano'] / 'MANO_RIGHT.pkl',
+                # Upstream builds the left-hand MANO layer as well, although a
+                # left crop is fitted with the right-hand model after mirroring.
+                'mano_left': paths['mano'] / 'MANO_LEFT.pkl'}
     optional = {}
     return dict(required=required, optional=optional, model=name, roots=paths)
 
@@ -291,7 +296,7 @@ def readiness(root=None, env=None) -> list:
     labels = dict(weights_config='FAH model configuration', weights_model='FAH model weights',
                   detector='FAH detector package (loaded, never used for detection)',
                   sam_config='SAM 3D Body configuration', sam_mhr='SAM 3D Body MHR geometry',
-                  mano='MANO right-hand model')
+                  mano='MANO right-hand model', mano_left='MANO left-hand model')
     for key, label in labels.items():
         path = paths['required'][key]
         add(label, path is not None and path.is_file(),

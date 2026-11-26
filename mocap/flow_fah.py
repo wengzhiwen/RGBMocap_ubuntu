@@ -2,15 +2,19 @@
 
 Off by default and Ubuntu-only. FAH replaces only the 15 local hand rotations per
 side: root, body, wrist, trajectory, shape and the native contact tensors stay
-exactly as FlowHMR published them. Frames FAH cannot use keep the original
-FlowHMR fingers, so a partial run never invents hand motion.
+exactly as the body model published them. Frames FAH cannot use keep the original
+fingers, so a partial run never invents hand motion.
 
-Boxes are the project's own per-frame SAM body-derived left/right hand boxes
-(`flow_hand_boxes.npy`), with the project's frame indexing and saved per-clip
-camera intrinsics. There is no FAH detection pass and no video/world mode here.
+The parent side never imports FAH or Torch for its own runtime; the child (`run`,
+`run_request`) is the only place FAH loads. Two callers share one inference loop:
 
-The parent side (`refine`) never imports FAH or Torch for its own runtime; the
-child (`run`) is the only place FAH loads.
+- FlowHMR (`refine`/`run`): the project's own per-frame SAM body-derived left/right
+  hand boxes (`flow_hand_boxes.npy`) with saved per-clip camera intrinsics; the
+  fitted rotations are cached in the project and replace rot6d rows directly.
+- FAB (`refine_request`/`run_request`): one numeric request from
+  `mocap/fab_pipeline.py`, whose boxes come from FAB's own 2D hand keypoints.
+
+There is no FAH detection pass, no video/world mode and no temporal smoothing.
 """
 from pathlib import Path
 import json, os, subprocess, uuid, zipfile
@@ -34,6 +38,9 @@ FIT_FD_EPS = 1e-2
 # The pinned pipeline's own presence gate; FAH's side is taken from this project, not re-decided.
 PRESENCE_MIN = 0.5
 MAX_FRAMES = 5000
+# The FAB request protocol: its boxes come from FAB's own 2D hand keypoints (mocap/fab_data.py).
+REQUEST_HANDS = ('every frame, boxes derived from the FAB predictor\'s own 2D hand keypoints, '
+                 'saved per-clip intrinsics, no FAH detection, no temporal smoothing')
 
 
 def saved_flow_options(project, state=None):
@@ -103,7 +110,7 @@ def intrinsics_binding(project):
     return dict(file=file_stat(path), frames=int(focal.shape[0]), digest=hashlib.sha256(values.tobytes()).hexdigest())
 
 
-def source_identity(root=None):
+def source_identity(root=None, hands=None):
     """Code, pinned source, package and gated-asset stamps of the FAH pass itself."""
     from . import fah_runtime as runtime
     return dict(version=1, code=runtime.code_identity(ROOT if root is None else root),
@@ -111,7 +118,8 @@ def source_identity(root=None):
                 fit=dict(iters=FIT_ITERS, solver='gn', weight_surface=FIT_WEIGHT_SURFACE, centre=FIT_CENTRE,
                          fd_eps=FIT_FD_EPS, init='closed-form per-part Procrustes', presence_min=PRESENCE_MIN,
                          smoothing='none'),
-                hands='every frame, this project\'s SAM left/right boxes, saved per-clip intrinsics, '
+                hands=hands if hands is not None else
+                      'every frame, this project\'s SAM left/right boxes, saved per-clip intrinsics, '
                       'no FAH detection, no temporal smoothing')
 
 
@@ -131,10 +139,10 @@ def hand_identity(project):
     return dict(source=source_identity(), inputs=inputs, intrinsics=intrinsics)
 
 
-def load_hands(project, n):
+def load_hands(path, n):
     """Numeric per-frame validity and local rotations; never a pickled object."""
     import numpy as np
-    with np.load(Path(project) / HANDS, allow_pickle=False) as z:
+    with np.load(Path(path), allow_pickle=False) as z:
         rotations = z['rotations'].copy()
         valid = z['valid'].copy()
     if rotations.shape != (n, 2, 15, 3, 3) or valid.shape != (n, 2) or valid.dtype != bool or \
@@ -212,7 +220,8 @@ def fit_rotations(hand, is_right, fitter, procrustes, regressor=None, iters=FIT_
 
     FAH fits a right hand even for a left one: the pinned `MeshFitter` reports the
     flat-hand 45-D angles in that mirrored frame, so the mirror is undone here by
-    conjugation. Returns None when this hand must keep the FlowHMR fingers.
+    conjugation. Returns None when this hand keeps the caller's own fingers
+    (FlowHMR's, or the relaxed mean pose of a FAB body).
     """
     import numpy as np
     if not isinstance(hand, dict):
@@ -268,7 +277,7 @@ def refine(project, output, emit):
         value = json.loads(receipt.read_text(encoding='utf-8'))
         cached = value['identity'] == identity and value['output'] == file_stat(payload)
         if cached:
-            load_hands(project, n)
+            load_hands(project / HANDS, n)
     except (OSError, ValueError, KeyError, TypeError, EOFError, zipfile.BadZipFile):
         cached = False
     if not cached:
@@ -278,33 +287,12 @@ def refine(project, output, emit):
             session.discard()
         gc.collect()
         torch.cuda.empty_cache()
-        python = fah_runtime.interpreter(ROOT)
-        if not python.is_file():
-            raise RuntimeError('FAH needs its own pinned environment at ' + fah_runtime.VENV + '. ' + fah_runtime.HINT)
         emit('info', message='FlowHMR FAH: every-frame fingers from this project\'s SAM hand boxes; '
                              'body, wrists, trajectory and contacts are retained.')
-        command = [str(python), '-I', '-X', 'utf8', str(ROOT / 'mocap/flow_fah_entry.py'), str(project)]
-        from collections import deque
-        tail = deque(maxlen=20)
-        with subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                              text=True, encoding='utf-8', errors='replace',
-                              creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)) as child:
-            try:
-                for line in child.stdout:
-                    tail.append(line[-1000:])
-                    if line.startswith(EVENT):
-                        event = json.loads(line[len(EVENT):])
-                        kind = event.pop('type')
-                        emit(kind, **event)
-                if child.wait():
-                    raise RuntimeError('FlowHMR FAH failed:\n' + ''.join(tail)[-4000:])
-            except BaseException:
-                child.kill()
-                child.wait()
-                raise
+        run_child([str(project)], emit, 'FlowHMR FAH')
         if hand_identity(project) != identity:
             raise RuntimeError('FAH inputs changed during inference. Reconstruct 3D again.')
-    rotations, valid = load_hands(project, n)
+    rotations, valid = load_hands(project / HANDS, n)
     result = dict(output)
     result['rot6d'] = output['rot6d'].clone()
     for side, offset in enumerate(ROT6D_SLOTS):
@@ -319,28 +307,56 @@ def refine(project, output, emit):
     return result
 
 
-def run(project, emit):
-    """Called only by the separate pinned `.venv-fah` runtime."""
-    import cv2, gc, inspect, json, os, time
+def run_child(arguments, emit, label):
+    """Parent side: one isolated `.venv-fah` child. Its events are relayed and its
+    last output lines are kept for the error message."""
+    python = fah_runtime.interpreter(ROOT)
+    if not python.is_file():
+        raise RuntimeError('FAH needs its own pinned environment at ' + fah_runtime.VENV + '. ' + fah_runtime.HINT)
+    command = [str(python), '-I', '-X', 'utf8', str(ROOT / 'mocap/flow_fah_entry.py'), *arguments]
+    from collections import deque
+    tail = deque(maxlen=20)
+    with subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                          text=True, encoding='utf-8', errors='replace',
+                          creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)) as child:
+        try:
+            for line in child.stdout:
+                tail.append(line[-1000:])
+                if line.startswith(EVENT):
+                    event = json.loads(line[len(EVENT):])
+                    kind = event.pop('type')
+                    emit(kind, **event)
+            if child.wait():
+                raise RuntimeError(f'{label} failed:\n' + ''.join(tail)[-4000:])
+        except BaseException:
+            child.kill()
+            child.wait()
+            raise
+
+
+def write_hands(target, rotations, valid, n):
+    """Child side: the numeric answer, revalidated before the parent can see it."""
+    import numpy as np
+    temporary = target.with_name(target.name + '.' + uuid.uuid4().hex + '.partial')
+    try:
+        with temporary.open('wb') as stream:
+            np.savez(stream, rotations=rotations, valid=valid)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return load_hands(target, n)
+
+
+def infer(video, boxes, intrinsics, width, height, emit):
+    """Child side, only inside the pinned `.venv-fah`: every-frame MANO fits for the
+    left/right boxes of each frame. Returns the 15 local rotations per hand
+    (frames,2,15,3,3), which of them were fitted (frames,2) and the per-side counts."""
+    import cv2, gc, inspect, os, time
     import numpy as np, torch
-    started = time.monotonic()
-    from .storage import atomic_json
-    from .result_artifacts import file_stat
     from .compute_policy import configure_worker_cpu
     from .model_session import set_memory_budget
-    project = Path(project).resolve()
-    state = json.loads((project / 'project.json').read_text(encoding='utf-8'))
-    n = state['frames']
-    if state.get('pipeline', {}).get('model') != 'flowhmr' or not enabled(project) or not 1 <= n <= MAX_FRAMES:
-        raise ValueError('Invalid FlowHMR FAH project')
-    if not fah_runtime.supported():
-        raise ValueError('FAH finger refinement runs only on the Linux route.')
-    identity = hand_identity(project)
-    boxes = np.load(project / BOXES, allow_pickle=False)
-    if boxes.shape != (n, 2, 4):
-        raise ValueError('SAM hand boxes do not match the motion')
-    with np.load(project / CAMERA, allow_pickle=False) as data:
-        intrinsics = np.asarray(data['K'], np.float32).reshape(n, 3, 3)
+    started = time.monotonic()
+    n = boxes.shape[0]
     torch.set_num_threads(configure_worker_cpu('flowhmr'))
     if not torch.cuda.is_available():
         raise RuntimeError('FAH requires a compatible NVIDIA GPU')
@@ -364,14 +380,13 @@ def run(project, emit):
                         wv=FIT_WEIGHT_SURFACE, centre=FIT_CENTRE, fd_eps=FIT_FD_EPS, jac='fd')
     procrustes = ManoProcrustes(os.environ['MANO_DIR'])
     regressor = getattr(method.method, 'vreg', None)
-    width, height = state['width'], state['height']
     valid = box_validity(boxes, width, height)
     rotations = np.tile(np.eye(3, dtype=np.float32), (n, 2, 15, 1, 1))
     used = [0, 0]
-    emit('info', message=f'FAH fingers: {name} backbone; every frame, both project boxes per frame; '
+    emit('info', message=f'FAH fingers: {name} backbone; every frame, both supplied hand boxes per frame; '
                          f'{FIT_ITERS} Gauss-Newton step(s) from the closed-form start; no temporal smoothing.')
     try:
-        cap = cv2.VideoCapture(str(project / 'input.mp4'))
+        cap = cv2.VideoCapture(str(video))
         try:
             with torch.inference_mode():
                 for index in range(n):
@@ -402,20 +417,106 @@ def run(project, emit):
         del fitter, procrustes, method, estimator
         gc.collect()
         torch.cuda.empty_cache()
-    if hand_identity(project) != identity:
-        raise RuntimeError('FAH inputs changed before commit')
-    target = project / HANDS
-    temporary = target.with_name(target.name + '.' + uuid.uuid4().hex + '.partial')
-    try:
-        with temporary.open('wb') as stream:
-            np.savez(stream, rotations=rotations, valid=valid)
-        os.replace(temporary, target)
-    finally:
-        temporary.unlink(missing_ok=True)
-    load_hands(project, n)
-    atomic_json(project / RECEIPT, dict(identity=identity, output=file_stat(target)))
     emit('progress', current=n, total=n, phase='fah', message='FAH finger pass complete')
     emit('info', message=f'FAH finger pass: {used[0]}/{n} left and {used[1]}/{n} right fitted frames; '
                          f'{time.monotonic() - started:.2f} s; peak allocated VRAM '
                          f'{torch.cuda.max_memory_allocated() / 2 ** 30:.2f} GiB; peak worker RAM '
                          f'{peak_rss_bytes() / 2 ** 30:.2f} GiB.')
+    return rotations, valid, used
+
+
+def run(project, emit):
+    """Child side for FlowHMR: called only by the separate pinned `.venv-fah` runtime."""
+    import numpy as np
+    project = Path(project).resolve()
+    state = json.loads((project / 'project.json').read_text(encoding='utf-8'))
+    n = state['frames']
+    if state.get('pipeline', {}).get('model') != 'flowhmr' or not enabled(project) or not 1 <= n <= MAX_FRAMES:
+        raise ValueError('Invalid FlowHMR FAH project')
+    if not fah_runtime.supported():
+        raise ValueError('FAH finger refinement runs only on the Linux route.')
+    identity = hand_identity(project)
+    boxes = np.load(project / BOXES, allow_pickle=False)
+    if boxes.shape != (n, 2, 4):
+        raise ValueError('SAM hand boxes do not match the motion')
+    with np.load(project / CAMERA, allow_pickle=False) as data:
+        intrinsics = np.asarray(data['K'], np.float32).reshape(n, 3, 3)
+    rotations, valid, _ = infer(project / 'input.mp4', boxes, intrinsics, state['width'], state['height'], emit)
+    if hand_identity(project) != identity:
+        raise RuntimeError('FAH inputs changed before commit')
+    from .storage import atomic_json
+    from .result_artifacts import file_stat
+    target = project / HANDS
+    write_hands(target, rotations, valid, n)
+    atomic_json(project / RECEIPT, dict(identity=identity, output=file_stat(target)))
+
+
+def read_request(path):
+    """Child side: one caller-written numeric request (boxes, intrinsics, frame size)."""
+    import numpy as np
+    with np.load(path, allow_pickle=False) as data:
+        absent = sorted({'boxes', 'K', 'width', 'height'} - set(data.files))
+        if absent:
+            raise ValueError('The FAH request is missing: ' + ', '.join(absent))
+        boxes = np.array(data['boxes'], np.float32)
+        intrinsic = np.asarray(data['K'], np.float64)
+        width = int(np.asarray(data['width']).reshape(()))
+        height = int(np.asarray(data['height']).reshape(()))
+    n = boxes.shape[0] if boxes.ndim == 3 else 0
+    if not 1 <= n <= MAX_FRAMES or boxes.shape != (n, 2, 4) or not np.isfinite(boxes).all():
+        raise ValueError(f'The FAH request needs finite hand boxes with shape (frames,2,4) and 1..{MAX_FRAMES} frames')
+    if intrinsic.shape not in ((3, 3), (1, 3, 3), (n, 3, 3)) or not np.isfinite(intrinsic).all():
+        raise ValueError('The FAH request needs one (3,3) or one per-frame (frames,3,3) camera matrix')
+    focal = intrinsic.reshape(-1, 3, 3)
+    if (focal[:, [0, 1], [0, 1]] <= 0).any() or width < 16 or height < 16:
+        raise ValueError('The FAH request needs positive focal lengths and the video frame size')
+    intrinsics = np.broadcast_to(np.asarray(intrinsic, np.float32).reshape(-1, 3, 3), (n, 3, 3))
+    return boxes, np.ascontiguousarray(intrinsics), width, height
+
+
+def run_request(request, video, output, receipt, emit):
+    """Child side for FAB: the caller owns the request, the work folder and all receipts."""
+    from .storage import atomic_json
+    from .result_artifacts import file_stat
+    if not fah_runtime.supported():
+        raise ValueError('FAH finger refinement runs only on the Linux route.')
+    request, video, output, receipt = (Path(path) for path in (request, video, output, receipt))
+    boxes, intrinsics, width, height = read_request(request)
+    source = source_identity(hands=REQUEST_HANDS)
+    if output.exists():
+        raise ValueError('The FAH output already exists; select a new file.')
+    rotations, valid, used = infer(video, boxes, intrinsics, width, height, emit)
+    write_hands(output, rotations, valid, boxes.shape[0])
+    atomic_json(receipt, dict(identity=dict(version=1, source=source, request=file_stat(request),
+                                            video=file_stat(video)),
+                              output=file_stat(output), used=used))
+
+
+def refine_request(work, video, boxes, intrinsics, width, height, emit):
+    """Parent side for FAB: stage one numeric request in the caller's work folder, run
+    the isolated child and return its checked answer. Nothing is cached here; the
+    caller owns receipts and removes `files` after its own commit."""
+    import numpy as np
+    from .result_artifacts import file_stat
+    work = Path(work)
+    token = uuid.uuid4().hex[:12]
+    request, target, receipt = (work / f'fah-{token}-{part}' for part in ('request.npz', 'hands.npz', 'receipt.json'))
+    n = int(boxes.shape[0])
+    intrinsic = np.asarray(intrinsics, np.float64)
+    K = intrinsic if intrinsic.shape == (3, 3) else intrinsic.reshape(-1, 3, 3)   # one, or one per frame
+    with request.open('wb') as stream:
+        np.savez(stream, boxes=np.asarray(boxes, np.float32),
+                 K=K,
+                 width=np.array(int(width), np.int32), height=np.array(int(height), np.int32))
+    source = source_identity(hands=REQUEST_HANDS)
+    run_child(['--request', str(request), '--video', str(video), '--output', str(target), '--receipt', str(receipt)],
+              emit, 'FAB FAH')
+    try:
+        value = json.loads(receipt.read_text(encoding='utf-8'))
+    except (OSError, ValueError) as error:
+        raise RuntimeError('The FAH finger pass wrote no receipt.') from error
+    if (value.get('identity') or {}).get('source') != source or value.get('output') != file_stat(target):
+        raise RuntimeError('FAH code, runtime or files changed during the finger pass; run it again.')
+    rotations, valid = load_hands(target, n)
+    return dict(rotations=rotations, valid=valid, used=[int(valid[:, side].sum()) for side in (0, 1)], source=source,
+                files=(request, target, receipt))

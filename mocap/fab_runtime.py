@@ -167,7 +167,8 @@ def package(root=None):
     if site is None:
         return None
     for info in sorted((p for p in site.iterdir() if p.is_dir() and p.name.endswith('.dist-info')), key=lambda p: p.name):
-        if info.name.rsplit('-', 1)[0].lower().replace('_', '-') != PACKAGE:
+        # Strip the suffix first: 'fab-1.0.0.dist-info' must reduce to 'fab', not 'fab-1.0.0.dist'.
+        if info.name[:-len('.dist-info')].rsplit('-', 1)[0].lower().replace('_', '-') != PACKAGE:
             continue
         found = dict(name=PACKAGE, dist_info=info.name, version=None, url=None, editable=None, vcs=None, commit=None)
         try:

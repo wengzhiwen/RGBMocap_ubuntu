@@ -15,12 +15,16 @@ class ModelWorkspace:
                     sam_hand_stride4=self.flow_hand_stride4.isChecked(),hamer=self.flow_hamer.isChecked(),
                     fah=self.flow_fah.isChecked())
 
+    def selected_fab_options(self):
+        return dict(fah=self.fab_fah.isChecked())
+
     def workspace_settings(self):
         return dict(result=self.active_result,correction=self.selected_correction_options(),
             mamma_options=self.mamma_options(),
             prompthmr_options=self.prompthmr_options(),
             flow_options=self.selected_flow_options(),
-            exmr_options={'static_camera':self.exmr_camera.currentData(),'smoothing':'global' if self.exmr_smoothing.isChecked() else 'none'})
+            exmr_options={'static_camera':self.exmr_camera.currentData(),'smoothing':'global' if self.exmr_smoothing.isChecked() else 'none'},
+            fab_options=self.selected_fab_options())
 
     def restore_workspace_settings(self,settings):
         from .motion_tools import result_options,has_handflow,result_kind
@@ -33,6 +37,7 @@ class ModelWorkspace:
         flow=settings.get('flow_options',{})
         self.flow_hamer.setChecked(False)
         self.flow_fah.setChecked(False)
+        self.fab_fah.setChecked(False)
         self.flow_sampling.setCurrentIndex(max(0,self.flow_sampling.findData(flow.get('camera_interval',0))))
         self.fast_sam.setChecked(flow.get('fast_sam',True))
         self.flow_batch4.setChecked(flow.get('sam_batch4',True))
@@ -41,6 +46,8 @@ class ModelWorkspace:
         self.flow_hamer.setChecked(flow.get('hamer',False))
         from .fah_runtime import supported as fah_supported
         self.flow_fah.setChecked(fah_supported() and flow.get('fah',False) is True)
+        fab=settings.get('fab_options',{})
+        self.fab_fah.setChecked(fah_supported() and fab.get('fah',False) is True)
         exmr=settings.get('exmr_options',{})
         self.exmr_camera.setCurrentIndex(self.exmr_camera.findData(exmr.get('static_camera',True)))
         self.exmr_smoothing.setChecked(exmr.get('smoothing','global')=='global')
@@ -64,7 +71,7 @@ class ModelWorkspace:
             state=manifest(self.project)
             state.setdefault('pipeline',{})['result']=self.active_result
             settings=self.workspace_settings()
-            for key in ('correction','flow_options','exmr_options','prompthmr_options'):state[key]=settings[key]
+            for key in ('correction','flow_options','exmr_options','prompthmr_options','fab_options'):state[key]=settings[key]
             atomic_json(self.project/'project.json',state)
             saved=workspace.set_active(root,state['pipeline']['model'],self.project,self.workspace_view())
             model=state['pipeline']['model']

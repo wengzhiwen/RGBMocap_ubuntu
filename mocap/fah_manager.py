@@ -1,9 +1,9 @@
 """FAH readiness, setup guidance and MANO import in Model Manager."""
 from pathlib import Path
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QHBoxLayout, QLabel, QPushButton, QTextBrowser, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton, QTextBrowser, QVBoxLayout, QWidget
 
-from . import fah_runtime
+from . import fah_mano, fah_runtime
 
 
 def status_line():
@@ -32,7 +32,7 @@ class _RuntimePanel(QWidget):
         self.label.setWordWrap(True)
         self.label.setTextFormat(Qt.PlainText)
         self.import_button = QPushButton('Import FAH MANO...')
-        self.import_button.setToolTip('Import a trusted upstream-converted MANO_RIGHT.pkl for FAH only. '
+        self.import_button.setToolTip('Import a trusted converted MANO_RIGHT.pkl or MANO_LEFT.pkl for FAH only. '
                                       'Raw Chumpy or official MANO pickles are rejected and existing files are not replaced.')
         self.import_button.clicked.connect(self.import_mano)
         self.setup_button = QPushButton('FAH Runtime Setup...')
@@ -59,16 +59,20 @@ class _RuntimePanel(QWidget):
         parent = self._parent
         if not fah_runtime.supported() or bool(getattr(parent.window, 'busy', False)):
             return
-        target = Path(fah_runtime.asset_roots()['mano']) / 'MANO_RIGHT.pkl'
-        start = str(target.parent) if target.parent.exists() else ''
+        folder = Path(fah_runtime.asset_roots()['mano'])
         selected, _ = QFileDialog.getOpenFileName(
             parent,
-            'Import converted FAH MANO_RIGHT.pkl',
-            start,
+            'Import converted FAH MANO_RIGHT.pkl or MANO_LEFT.pkl',
+            str(folder) if folder.exists() else '',
             'MANO pickles (*.pkl);;All files (*)')
         if not selected:
             return
-        parent.start_model_jobs([('import_model', ['--model', 'fah_mano_right', '--video', selected])])
+        side = next((key for key, name in fah_mano.HAND_FILES.items() if Path(selected).name == name), None)
+        if side is None:
+            QMessageBox.warning(parent, 'Import FAH MANO',
+                                'Select a converted file named MANO_RIGHT.pkl or MANO_LEFT.pkl.')
+            return
+        parent.start_model_jobs([('import_model', ['--model', 'fah_mano_' + side, '--video', selected])])
 
 def runtime_panel(parent):
     return _RuntimePanel(parent)
@@ -91,9 +95,11 @@ def setup_instructions(parent):
     text.setHtml(f'''<h3>Optional FAH finger refinement</h3>
 <p>Default off. Selecting <b>FAH Finger Refinement</b> runs the pinned upstream
 <a href="{fah_runtime.PROJECT_URL}">FAH</a> hand model in its own isolated environment
-(<code>{fah_runtime.VENV}</code> in this app folder) as a child of the FlowHMR stage.
+(<code>{fah_runtime.VENV}</code> in this app folder) as a child of the FlowHMR stage
+(<code>flow --fah</code>) or of the FAB stage (<code>fab --fah</code>).
 It changes only finger rotations; body, wrists, trajectory, shape and contacts are kept.
-Existing HaMeR and plain FlowHMR behavior, caches and receipts are unchanged.</p>
+FlowHMR keeps its SAM hand boxes; FAB uses its own predicted hand keypoints.
+Existing HaMeR, plain FlowHMR and plain FAB behavior, caches and receipts are unchanged.</p>
 <h4>1. Provision the pinned environment yourself</h4>
 <p>Close RGB MoCap, then create <code>{fah_runtime.VENV}</code> in this app folder from the exact
 upstream revision this app was checked against:</p>
@@ -109,7 +115,7 @@ installer cannot record it, register the same commit deliberately in
 <ul>
 <li>FAH weights: <code>{paths['roots']['weights']}</code> (<code>FAH_WEIGHTS</code>, under <code>FAH_HOME</code>)</li>
 <li>SAM 3D Body configuration and MHR geometry: <code>{paths['roots']['sam3d']}</code> (<code>FAH_SAM3D</code>)</li>
-<li>MANO right hand: <code>{paths['roots']['mano']}</code> (<code>MANO_DIR</code>). Use the converted version via <b>Import FAH MANO...</b>; current configured file: <code>{paths['roots']['mano'] / 'MANO_RIGHT.pkl'}</code>.</li>
+<li>MANO right and left hands: <code>{paths['roots']['mano']}</code> (<code>MANO_DIR</code>). Upstream FAH loads both; import each converted file with <b>Import FAH MANO...</b>. Current configured files: <code>{paths['roots']['mano'] / 'MANO_RIGHT.pkl'}</code> and <code>{paths['roots']['mano'] / 'MANO_LEFT.pkl'}</code>.</li>
 </ul>
 <p>Current readiness:</p><ul>{''.join(lines)}</ul>
 {'' if not gaps else '<p><b>Still needed:</b></p><ul>' + ''.join(gaps) + '</ul>'}

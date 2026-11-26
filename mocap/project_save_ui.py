@@ -50,6 +50,7 @@ class ProjectSaving:
                 mamma_active_camera=self.mamma_active_camera,
                 flow_options=self.selected_flow_options(),
                 exmr_options={'static_camera':self.exmr_camera.currentData(),'smoothing':'global' if self.exmr_smoothing.isChecked() else 'none'},
+                fab_options=self.selected_fab_options(),
                 correction=self.selected_correction_options(), frame=self.slider.value(),
                 trim=[self.slider.clip_in, self.slider.clip_out]))
             self._project_save_request = request

@@ -8,9 +8,9 @@ Launch (the caller owns environments, options, project files and receipts):
 One resident PyTorch CUDA worker loads the pinned upstream FAB predictor once
 and runs the project's canonical working video one frame at a time with the
 tracking stage's boxes and intrinsics. It writes one atomic numeric NPZ of SMPL
-parameters, placement, contacts and calibration and nothing else: no project
-file, receipt, render, upstream pickle or mesh cache. ``mocap.fab_data`` reads
-that record back in the shared CPU runtime.
+parameters, placement, contacts, calibration and the predictor's own 2D hand
+points, and nothing else: no project file, receipt, render, upstream pickle or
+mesh cache. ``mocap.fab_data`` reads that record back in the shared CPU runtime.
 
 FAB's released SMPL fit is used, not MHR: ``smpl_pose``/``smpl_betas`` are the
 native SMPL axis angles and shape coefficients in the camera frame. The fitted
@@ -42,6 +42,9 @@ MODELS = ('fab-s', 'fab-l')           # must stay inside mocap.fab_data.MODELS
 CONSISTENCY_LIMIT_M = 0.005          # mesh vs the pinned SMPL forward; mm on the float32 path
 DEPTH_LIMIT_M = 0.05                 # smallest accepted pelvis camera depth
 PROGRESS_EVERY = 15
+HAND_COUNT = 21                     # MHR-70 points per hand
+# MHR-70 order inside keypoints2d: right hand first, then left; each block ends with its wrist.
+HAND_BLOCKS = {0: slice(42, 63), 1: slice(21, 42)}   # record slot -> left, right
 
 
 def emit(kind, **values):
@@ -97,7 +100,7 @@ def read_inputs(project, np):
         raise ValueError('Fixed-camera FAB needs at least one tracked person box.')
     if not np.isfinite(boxes).all():
         raise ValueError('Project tracking boxes are not finite.')
-    if (boxes[:, 2] - boxes[:, 0] < 2 or boxes[:, 3] - boxes[:, 1] < 2).any():
+    if ((boxes[:, 2] - boxes[:, 0] < 2) | (boxes[:, 3] - boxes[:, 1] < 2)).any():
         raise ValueError('Project tracking boxes are too small.')
     if not np.isfinite(intrinsic).all() or intrinsic[0, 0] <= 0 or intrinsic[1, 1] <= 0:
         raise ValueError('Project camera intrinsics are invalid.')
@@ -125,7 +128,7 @@ def readout(predictor, person, np, torch):
 
     with torch.inference_mode():
         vertices, joints = predictor.body(tensor(pose[:3]), tensor(pose[3:]), tensor(betas))
-        forward = vertices.double().cpu().numpy()
+        forward = vertices[0].double().cpu().numpy()  # the pinned body returns [B, 6890, 3]
         pelvis_rest = joints[0, 0].double().cpu().numpy()
     del vertices, joints
     difference = mesh.astype(np.float64) - forward
@@ -142,6 +145,24 @@ def readout(predictor, person, np, torch):
         raise ValueError(f'FAB produced an invalid camera depth ({depth:.3f} m at the pelvis).')
     # Provisional Y-up for an approximately level fixed camera: up is -camera Y.
     return pose, betas, transl, pelvis, float(-mesh[:, 1].max())
+
+
+def hand_keypoints(person, np):
+    """FAB's own 2D hand points in working-video pixels, shape (2,21,2): left, then right.
+
+    Only the optional FAH finger pass crops hands from them; the body fit never
+    reads them. A hand with no finite points is stored as zeros, which
+    ``mocap.fab_data.hand_boxes`` treats as no usable hand, so a body result never
+    fails or changes because of them. A hand with one bad point is stored the
+    same way: that point would otherwise pull its crop towards the image corner.
+    """
+    values = person.get('keypoints2d') if isinstance(person, dict) else None
+    values = np.asarray(values, np.float32) if values is not None else np.zeros((0, 2), np.float32)
+    if values.ndim != 2 or values.shape[1] != 2 or values.shape[0] < 63:
+        return np.zeros((2, HAND_COUNT, 2), np.float32)
+    hands = np.stack([np.array(values[block], np.float32) for block in HAND_BLOCKS.values()])
+    hands[~np.isfinite(hands).all(-1).all(-1)] = 0.
+    return hands
 
 
 def median_rest_joints(body, betas, np, torch, parents, count):
@@ -186,7 +207,7 @@ def reconstruct(project, output, model):
     free, total = torch.cuda.mem_get_info()
     announce('FAB inference', effective_mode(),
              f'One resident {model} predictor, one box per frame, {frames} frames at 30 fps.')
-    rows = {name: [] for name in ('smpl_pose', 'smpl_betas', 'smpl_transl', 'camera_pelvis', 'contact')}
+    rows = {name: [] for name in ('smpl_pose', 'smpl_betas', 'smpl_transl', 'camera_pelvis', 'contact', 'hand_keypoints')}
     sole = []
     session = ModelSession()
     with session.activate():
@@ -231,6 +252,7 @@ def reconstruct(project, output, model):
                 rows['smpl_transl'].append(transl.astype(np.float32))
                 rows['camera_pelvis'].append(pelvis.astype(np.float32))
                 rows['contact'].append(np.asarray(people[0]['contact'], np.float32))
+                rows['hand_keypoints'].append(hand_keypoints(people[0], np))
                 sole.append(lowest)
                 previous = people[0]
                 if index % PROGRESS_EVERY == 0 or index + 1 == frames:

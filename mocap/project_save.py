@@ -225,7 +225,7 @@ def save_project(request, emit=lambda *a, **k: None, cancelled=lambda: False):
                 path=staging/active_relative/'project.json'
                 data=manifest(path.parent)
                 data.setdefault('pipeline',{}).update(request.get('pipeline',{}))
-                for key in ('correction','flow_options','exmr_options'):
+                for key in ('correction','flow_options','exmr_options','fab_options'):
                     if key in request:data[key]={**data.get(key,{}),**request[key]}
                 atomic_json(path,data)
             atomic_json(staging/'project.json',value)
@@ -253,7 +253,7 @@ def save_project(request, emit=lambda *a, **k: None, cancelled=lambda: False):
                 if 'correction' in request:
                     value['correction'] = request['correction']
             if relative == active_relative or relative == Path('.'):
-                for key in ('flow_options', 'exmr_options'):
+                for key in ('flow_options', 'exmr_options', 'fab_options'):
                     if key in request:
                         value[key] = {**value.get(key,{}), **request[key]}
             atomic_json(path, value)
